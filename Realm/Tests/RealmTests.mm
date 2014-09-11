@@ -217,9 +217,6 @@
     XCTAssertEqual(1U, [StringObject allObjectsInRealm:realm].count);
 }
 
-// FIXME: Re-enable once we find out why this fails intermittently on iOS in Xcode6
-// Asana: https://app.asana.com/0/861870036984/14552787865017
-#ifndef REALM_SWIFT
 - (void)testBackgroundRealmIsNotified {
     RLMRealm *realm = [self realmWithTestPath];
 
@@ -264,7 +261,6 @@
     // wait for queue to finish
     dispatch_sync(queue, ^{});
 }
-#endif
 
 - (void)testBeginWriteTransactionsNotifiesWithUpdatedObjects {
     RLMRealm *realm = [self realmWithTestPath];
@@ -450,6 +446,29 @@
 
     XCTAssertThrows([RLMRealm realmWithPath:RLMTestRealmPath() readOnly:YES error:nil],
                     @"should reject table missing column");
+}
+
+- (void)testAddOrUpdate {
+    RLMRealm *realm = [RLMRealm defaultRealm];
+    [realm beginWriteTransaction];
+
+    PrimaryStringObject *obj = [[PrimaryStringObject alloc] initWithObject:@[@"string", @1]];
+    [realm addOrUpdateObject:obj];
+    RLMArray *objects = [PrimaryStringObject allObjects];
+    XCTAssertEqual([objects count], 1U, @"Should have 1 object");
+    XCTAssertEqual([(PrimaryStringObject *)objects[0] intCol], 1, @"Value should be 1");
+
+    PrimaryStringObject *obj2 = [[PrimaryStringObject alloc] initWithObject:@[@"string2", @2]];
+    [realm addOrUpdateObject:obj2];
+    XCTAssertEqual([objects count], 2U, @"Should have 2 objects");
+
+    // upsert with new secondary property
+    PrimaryStringObject *obj3 = [[PrimaryStringObject alloc] initWithObject:@[@"string", @3]];
+    [realm addOrUpdateObject:obj3];
+    XCTAssertEqual([objects count], 2U, @"Should have 2 objects");
+    XCTAssertEqual([(PrimaryStringObject *)objects[0] intCol], 3, @"Value should be 3");
+
+    [realm commitWriteTransaction];
 }
 
 @end
