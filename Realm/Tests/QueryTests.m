@@ -1479,7 +1479,6 @@
 
 - (void)testArrayIn
 {
-
     RLMRealm *realm = [RLMRealm defaultRealm];
     [realm beginWriteTransaction];
 
@@ -1506,6 +1505,76 @@
     XCTAssertEqual(1U, [[PersonObject objectsWhere:@"name == 'Ari'"] count]);
     XCTAssertEqual(0U, [[PersonObject objectsWhere:@"name == 'Ari' and age == 29"] count]);
     XCTAssertEqual(0U, [[[PersonObject objectsWhere:@"name == 'Ari'"] objectsWhere:@"age == 29"] count]);
+}
+
+- (void)testLinkViewQuery {
+    RLMRealm *realm = [RLMRealm defaultRealm];
+
+    [realm beginWriteTransaction];
+    [CompanyObject createInRealm:realm
+                      withObject:@[@"company name", @[@{@"name": @"John", @"age": @30, @"hired": @NO},
+                                                      @{@"name": @"Joe",  @"age": @40, @"hired": @YES},
+                                                      @{@"name": @"Jill",  @"age": @50, @"hired": @YES}]]];
+    [realm commitWriteTransaction];
+
+    CompanyObject *co = [CompanyObject allObjects][0];
+    XCTAssertEqual(1U, [co.employees objectsWhere:@"hired = NO"].count);
+    XCTAssertEqual(2U, [co.employees objectsWhere:@"hired = YES"].count);
+    XCTAssertEqual(1U, [co.employees objectsWhere:@"hired = YES AND age = 40"].count);
+    XCTAssertEqual(0U, [co.employees objectsWhere:@"hired = YES AND age = 30"].count);
+    XCTAssertEqual(3U, [co.employees objectsWhere:@"hired = YES OR age = 30"].count);
+    XCTAssertEqual(1U, [[co.employees objectsWhere:@"hired = YES"] objectsWhere:@"name = 'Joe'"].count);
+}
+
+- (void)testLinkViewQueryLifetime {
+    RLMRealm *realm = [RLMRealm defaultRealm];
+
+    [realm beginWriteTransaction];
+    [CompanyObject createInRealm:realm
+                      withObject:@[@"company name", @[@{@"name": @"John", @"age": @30, @"hired": @NO},
+                                                      @{@"name": @"Jill",  @"age": @50, @"hired": @YES}]]];
+    [EmployeeObject createInRealm:realm withObject:@{@"name": @"Joe",  @"age": @40, @"hired": @YES}];
+    [realm commitWriteTransaction];
+
+    RLMArray *subarray = nil;
+    @autoreleasepool {
+        __attribute((objc_precise_lifetime)) CompanyObject *co = [CompanyObject allObjects][0];
+        subarray = [co.employees objectsWhere:@"age = 40"];
+        XCTAssertEqual(0U, subarray.count);
+    }
+
+    [realm beginWriteTransaction];
+    @autoreleasepool {
+        __attribute((objc_precise_lifetime)) CompanyObject *co = [CompanyObject allObjects][0];
+        [co.employees addObject:[EmployeeObject createInRealm:realm withObject:@{@"name": @"Joe",  @"age": @40, @"hired": @YES}]];
+    }
+    [realm commitWriteTransaction];
+
+    XCTAssertEqual(1U, subarray.count);
+    XCTAssertEqualObjects(@"Joe", subarray[0][@"name"]);
+}
+
+- (void)testLinkViewQueryLiveUpdate {
+    RLMRealm *realm = [RLMRealm defaultRealm];
+
+    [realm beginWriteTransaction];
+    [CompanyObject createInRealm:realm
+                      withObject:@[@"company name", @[@{@"name": @"John", @"age": @30, @"hired": @NO},
+                                                      @{@"name": @"Jill",  @"age": @40, @"hired": @YES}]]];
+    EmployeeObject *eo = [EmployeeObject createInRealm:realm withObject:@{@"name": @"Joe",  @"age": @40, @"hired": @YES}];
+    [realm commitWriteTransaction];
+
+    CompanyObject *co = CompanyObject.allObjects.firstObject;
+    RLMArray *employees = [co.employees objectsWhere:@"age = 40"];
+    XCTAssertEqualObjects(@"Jill", [[employees lastObject] name]);
+    XCTAssertEqual(1U, employees.count);
+
+    [realm beginWriteTransaction];
+    [co.employees addObject:eo];
+    [realm commitWriteTransaction];
+
+    XCTAssertEqualObjects(@"Joe", [[employees lastObject] name]);
+    XCTAssertEqual(2U, employees.count);
 }
 
 @end

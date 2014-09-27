@@ -243,4 +243,14 @@ static inline void RLMValidateObjectClass(RLMObject *obj, NSString *expected) {
     return ar;
 }
 
+- (RLMArray *)objectsWithPredicate:(NSPredicate *)predicate {
+    RLMLinkViewArrayValidateAttached(self);
+
+    tightdb::Query query = _backingLinkView->get_target_table().where(_backingLinkView);
+    RLMUpdateQueryWithPredicate(&query, predicate, _realm.schema, _realm.schema[self.objectClassName]);
+    return [RLMArrayTableView arrayWithObjectClassName:self.objectClassName
+                                                 query:std::make_unique<tightdb::Query>(query)
+                                                 realm:_realm];
+}
+
 @end

@@ -22,6 +22,7 @@
 * Allow passing any enumerable to IN clauses rather than just NSArray.
 * Add `objectForPrimaryKey:` and `objectInRealm:forPrimaryKey:` convenience
   methods to fetch an object by primary key.
+* Implement `objectsWhere:` and `objectsWithPredicate:` for array properties.
 
 ### Bugfixes
 
