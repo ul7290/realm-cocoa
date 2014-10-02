@@ -16,16 +16,20 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import <Foundation/Foundation.h>
+#import "RLMListBase_Private.h"
 
-#import <Realm/RLMArray.h>
-#import <Realm/RLMMigration.h>
-#import <Realm/RLMObject.h>
-#import <Realm/RLMPlatform.h>
-#import <Realm/RLMRealm.h>
-#import <Realm/RLMSchema.h>
+#import "RLMArray.h"
 
-#if defined(__IPHONE_8_0) && TARGET_OS_IPHONE
-#import <Realm/RLMSwiftHelpers.h>
-#import <Realm/RLMListBase.h>
-#endif
+@implementation RLMListBase
+- (instancetype)initWithArray:(RLMArray *)array {
+    self = [super init];
+    if (self) {
+        __rlmArray = array;
+    }
+    return self;
+}
+
+- (NSString *)description {
+    return [__rlmArray description];
+}
+@end

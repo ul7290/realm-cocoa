@@ -20,7 +20,38 @@ import Realm
 
 // Realm introspection depends on models to directly subclass RLMObject
 // so we typealias it to remove the 'RLM' prefix
-public typealias Object = RLMObject
+public class Object : RLMObject {
+    // Get the names of all properties in the object which are of type List<>
+    public class func getGenericListPropertyNames(obj: AnyObject) -> NSArray {
+        let reflection = reflect(obj)
+
+        var properties = [String]()
+
+        // Skip the first property (super):
+        // super is an implicit property on Swift objects
+        for i in 1..<reflection.count {
+            let mirror = reflection[i].1
+            if mirror.valueType is RLMListBase.Type {
+                properties.append(reflection[i].0)
+            }
+        }
+
+        return properties
+    }
+
+    // The property initializers don't get called without overriding this from Swift
+    public override init(realm: RLMRealm, schema: RLMObjectSchema, defaultValues: Bool) {
+        super.init(realm: realm, schema: schema, defaultValues: defaultValues)
+    }
+
+    public override init(object: AnyObject) {
+        super.init(object: object)
+    }
+
+    public override init() {
+        super.init()
+    }
+}
 
 // These types don't change when wrapping in Swift
 // so we just typealias them to remove the 'RLM' prefix

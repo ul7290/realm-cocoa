@@ -18,14 +18,12 @@
 
 #import <Foundation/Foundation.h>
 
-#import <Realm/RLMArray.h>
-#import <Realm/RLMMigration.h>
-#import <Realm/RLMObject.h>
-#import <Realm/RLMPlatform.h>
-#import <Realm/RLMRealm.h>
-#import <Realm/RLMSchema.h>
+@class RLMArray;
 
-#if defined(__IPHONE_8_0) && TARGET_OS_IPHONE
-#import <Realm/RLMSwiftHelpers.h>
-#import <Realm/RLMListBase.h>
-#endif
+@interface RLMListBase : NSObject
+@property (nonatomic, strong) RLMArray *_rlmArray;
+
+- (instancetype)initWithArray:(RLMArray *)array;
+
+@property(nonatomic, readonly) NSString *description;
+@end

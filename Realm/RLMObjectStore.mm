@@ -17,12 +17,13 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import "RLMObjectStore.hpp"
-#import "RLMRealm_Private.hpp"
 #import "RLMArray_Private.hpp"
+#import "RLMListBase.h"
 #import "RLMObjectSchema_Private.hpp"
 #import "RLMObject_Private.h"
 #import "RLMProperty_Private.h"
 #import "RLMQueryUtil.hpp"
+#import "RLMRealm_Private.hpp"
 #import "RLMUtil.hpp"
 
 #import <objc/runtime.h>
@@ -221,6 +222,18 @@ static inline void RLMVerifyInWriteTransaction(RLMRealm *realm) {
     RLMCheckThread(realm);
 }
 
+static inline void RLMInitSwiftArrays(RLMObject *object, RLMRealm *realm) {
+    // switch List<> properties to linkviews from standalone arrays
+    for (RLMProperty *prop in object.objectSchema.properties) {
+        if (prop.ivar) {
+            auto list = static_cast<RLMListBase *>(object_getIvar(object, prop.ivar));
+            list._rlmArray = [RLMArrayLinkView arrayWithObjectClassName:prop.objectClassName
+                                                                   view:object->_row.get_linklist(prop.column)
+                                                                  realm:realm];
+        }
+    }
+}
+
 template<typename F>
 static inline NSUInteger RLMCreateOrGetRowForObject(RLMObjectSchema *schema, F primaryValueGetter, RLMSetFlag options, bool &created) {
     // try to get existing row if updating
@@ -281,7 +294,10 @@ void RLMAddObjectToRealm(RLMObject *object, RLMRealm *realm, RLMSetFlag options)
     for (RLMProperty *prop in schema.properties) {
         // get object from ivar using key value coding
         id value = nil;
-        if ([object respondsToSelector:prop.getterSel]) {
+        if (prop.ivar) {
+            value = static_cast<RLMListBase *>(object_getIvar(object, prop.ivar))._rlmArray;
+        }
+        else if ([object respondsToSelector:prop.getterSel]) {
             value = [object valueForKey:prop.getterName];
         }
 
@@ -302,6 +318,7 @@ void RLMAddObjectToRealm(RLMObject *object, RLMRealm *realm, RLMSetFlag options)
 
     // switch class to use table backed accessor
     object_setClass(object, schema.accessorClass);
+    RLMInitSwiftArrays(object, realm);
 }
 
 
@@ -355,6 +372,7 @@ RLMObject *RLMCreateObjectInRealmWithValue(RLMRealm *realm, NSString *className,
 
     // switch class to use table backed accessor
     object_setClass(object, objectSchema.accessorClass);
+    RLMInitSwiftArrays(object, realm);
 
     return object;
 }
@@ -445,6 +463,9 @@ RLMObject *RLMCreateObjectAccessor(RLMRealm *realm, NSString *objectClassName, N
     RLMObject *accessor = [[objectSchema.accessorClass alloc] initWithRealm:realm schema:objectSchema defaultValues:NO];
     tightdb::Table &table = *objectSchema->_table;
     accessor->_row = table[index];
+
+    RLMInitSwiftArrays(accessor, realm);
+
     return accessor;
 }
 

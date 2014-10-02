@@ -35,7 +35,9 @@
         self = [self initWithRealm:nil schema:[self.class sharedSchema] defaultValues:YES];
 
         // set standalone accessor class
-        object_setClass(self, self.objectSchema.standaloneClass);
+        if (Class cls = self.objectSchema.standaloneClass) {
+            object_setClass(self, cls);
+        }
     }
     else {
         // if schema not initialized
