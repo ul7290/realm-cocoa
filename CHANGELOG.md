@@ -1,3 +1,14 @@
+0.87.0 Release notes (YYYY-MM-DD)
+=============================================================
+
+### API breaking changes
+
+### Enhancements
+
+* Add support for sorting `RLMArray`s by multiple columns with `arraySortedByProperties:ascending:`
+
+### Bugfixes
+
 0.86.2 Release notes (2014-10-06)
 =============================================================
 
