@@ -617,4 +617,30 @@
     [realm commitWriteTransaction];
 }
 
+- (void)testRollback
+{
+    RLMRealm *realm = [self realmWithTestPath];
+
+    [realm beginWriteTransaction];
+    IntObject *objectToDelete = [IntObject createInRealm:realm withObject:@[@0]];
+    IntObject *objectToModify = [IntObject createInRealm:realm withObject:@[@1]];
+    [realm commitWriteTransaction];
+
+    [realm beginWriteTransaction];
+    objectToModify.intCol = 2;
+    [realm deleteObject:objectToDelete];
+    IntObject *createdObject = [IntObject createInRealm:realm withObject:@[@3]];
+    [realm cancelWriteTransaction];
+
+    // modified object should be reverted
+    XCTAssertEqual(1, objectToModify.intCol);
+
+    // added object should be deleted
+    XCTAssertTrue(createdObject.isDeletedFromRealm);
+
+    // accessor for deleted object should stay deleted, but it should be in the Realm
+    XCTAssertTrue(objectToDelete.isDeletedFromRealm);
+    XCTAssertEqual(1U, [IntObject objectsInRealm:realm where:@"intCol = 0"].count);
+}
+
 @end

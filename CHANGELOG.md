@@ -1,3 +1,14 @@
+0.87.0 Release notes (YYYY-MM-DD)
+=============================================================
+
+### API breaking changes
+
+### Enhancements
+
+* Add `cancelWriteTransaction` to revert all changes made in a write transaction and end the transaction.
+
+### Bugfixes
+
 0.86.2 Release notes (2014-10-06)
 =============================================================
 
