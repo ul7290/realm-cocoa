@@ -11,6 +11,7 @@
 		2263AABC19B0A1E6007240D9 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2263AABB19B0A1E6007240D9 /* Foundation.framework */; };
 		2263AAC219B0A1E6007240D9 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 2263AAC019B0A1E6007240D9 /* InfoPlist.strings */; };
 		2263AAC519B0A1E6007240D9 /* RLMPRealmPlugin.m in Sources */ = {isa = PBXBuildFile; fileRef = 2263AAC419B0A1E6007240D9 /* RLMPRealmPlugin.m */; };
+		3CF8FC5D1B494F3B0066DC23 /* RLMPSimulatorManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 3CF8FC5C1B494F3B0066DC23 /* RLMPSimulatorManager.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,17 +23,13 @@
 		2263AAC319B0A1E6007240D9 /* RLMPRealmPlugin.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RLMPRealmPlugin.h; sourceTree = "<group>"; };
 		2263AAC419B0A1E6007240D9 /* RLMPRealmPlugin.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RLMPRealmPlugin.m; sourceTree = "<group>"; };
 		2263AAC619B0A1E6007240D9 /* RealmPlugin-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "RealmPlugin-Prefix.pch"; sourceTree = "<group>"; };
-		22B78F1619B0A47600968525 /* ___FILEBASENAME___.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "___FILEBASENAME___.h"; sourceTree = "<group>"; };
-		22B78F1719B0A47600968525 /* ___FILEBASENAME___.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "___FILEBASENAME___.m"; sourceTree = "<group>"; };
-		22B78F1919B0A47600968525 /* ___FILEBASENAME___.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "___FILEBASENAME___.h"; sourceTree = "<group>"; };
-		22B78F1A19B0A47600968525 /* ___FILEBASENAME___.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "___FILEBASENAME___.m"; sourceTree = "<group>"; };
-		22B78F1C19B0A47600968525 /* ___FILEBASENAME___.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = "___FILEBASENAME___.swift"; sourceTree = "<group>"; };
 		22B78F1F19B0A47600968525 /* ___FILEBASENAME___.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "___FILEBASENAME___.h"; sourceTree = "<group>"; };
 		22B78F2019B0A47600968525 /* ___FILEBASENAME___.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "___FILEBASENAME___.m"; sourceTree = "<group>"; };
 		22B78F2119B0A47600968525 /* TemplateIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = TemplateIcon.icns; sourceTree = "<group>"; };
 		22B78F2219B0A47600968525 /* TemplateInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = TemplateInfo.plist; sourceTree = "<group>"; };
 		22B78F2319B0A47600968525 /* install_templates.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; path = install_templates.sh; sourceTree = "<group>"; };
-		22B78F2419B0A47600968525 /* install_templates_applescript */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = install_templates_applescript; sourceTree = "<group>"; };
+		3CF8FC5B1B494F3B0066DC23 /* RLMPSimulatorManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RLMPSimulatorManager.h; sourceTree = "<group>"; };
+		3CF8FC5C1B494F3B0066DC23 /* RLMPSimulatorManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = RLMPSimulatorManager.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,6 +77,8 @@
 			children = (
 				2263AAC319B0A1E6007240D9 /* RLMPRealmPlugin.h */,
 				2263AAC419B0A1E6007240D9 /* RLMPRealmPlugin.m */,
+				3CF8FC5B1B494F3B0066DC23 /* RLMPSimulatorManager.h */,
+				3CF8FC5C1B494F3B0066DC23 /* RLMPSimulatorManager.m */,
 				2263AABE19B0A1E6007240D9 /* Supporting Files */,
 			);
 			path = RealmPlugin;
@@ -98,48 +97,10 @@
 		22B78F1319B0A47600968525 /* Templates */ = {
 			isa = PBXGroup;
 			children = (
-				22B78F1419B0A47600968525 /* class_templates */,
 				22B78F1D19B0A47600968525 /* file_templates */,
 				22B78F2319B0A47600968525 /* install_templates.sh */,
-				22B78F2419B0A47600968525 /* install_templates_applescript */,
 			);
 			path = Templates;
-			sourceTree = "<group>";
-		};
-		22B78F1419B0A47600968525 /* class_templates */ = {
-			isa = PBXGroup;
-			children = (
-				22B78F1519B0A47600968525 /* RLMObject */,
-				22B78F1819B0A47600968525 /* RLMObjectObjective-C */,
-				22B78F1B19B0A47600968525 /* RLMObjectSwift */,
-			);
-			path = class_templates;
-			sourceTree = "<group>";
-		};
-		22B78F1519B0A47600968525 /* RLMObject */ = {
-			isa = PBXGroup;
-			children = (
-				22B78F1619B0A47600968525 /* ___FILEBASENAME___.h */,
-				22B78F1719B0A47600968525 /* ___FILEBASENAME___.m */,
-			);
-			path = RLMObject;
-			sourceTree = "<group>";
-		};
-		22B78F1819B0A47600968525 /* RLMObjectObjective-C */ = {
-			isa = PBXGroup;
-			children = (
-				22B78F1919B0A47600968525 /* ___FILEBASENAME___.h */,
-				22B78F1A19B0A47600968525 /* ___FILEBASENAME___.m */,
-			);
-			path = "RLMObjectObjective-C";
-			sourceTree = "<group>";
-		};
-		22B78F1B19B0A47600968525 /* RLMObjectSwift */ = {
-			isa = PBXGroup;
-			children = (
-				22B78F1C19B0A47600968525 /* ___FILEBASENAME___.swift */,
-			);
-			path = RLMObjectSwift;
 			sourceTree = "<group>";
 		};
 		22B78F1D19B0A47600968525 /* file_templates */ = {
@@ -168,7 +129,8 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2263AAC919B0A1E6007240D9 /* Build configuration list for PBXNativeTarget "RealmPlugin" */;
 			buildPhases = (
-				22B78EF819B0A3AF00968525 /* Install templates */,
+				22B78EF819B0A3AF00968525 /* Install Templates */,
+				3F527BDF1A16C34300CA8B97 /* Install LLDB Script */,
 				2263AAB219B0A1E6007240D9 /* Sources */,
 				2263AAB319B0A1E6007240D9 /* Frameworks */,
 				2263AAB419B0A1E6007240D9 /* Resources */,
@@ -221,19 +183,33 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		22B78EF819B0A3AF00968525 /* Install templates */ = {
+		22B78EF819B0A3AF00968525 /* Install Templates */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputPaths = (
 			);
-			name = "Install templates";
+			name = "Install Templates";
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "cd Templates && osascript install_templates_applescript";
+			shellScript = "cd Templates && sh install_templates.sh";
+		};
+		3F527BDF1A16C34300CA8B97 /* Install LLDB Script */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Install LLDB Script";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "python rlm_lldb.py";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -243,6 +219,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2263AAC519B0A1E6007240D9 /* RLMPRealmPlugin.m in Sources */,
+				3CF8FC5D1B494F3B0066DC23 /* RLMPSimulatorManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

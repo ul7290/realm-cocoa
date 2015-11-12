@@ -16,16 +16,19 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import "RLMMigration.h"
-#import "RLMRealm.h"
+#import <Realm/RLMMigration.h>
+#import <Realm/RLMObjectBase.h>
+#import <Realm/RLMRealm.h>
+
+typedef void (^RLMObjectBaseMigrationBlock)(RLMObjectBase *oldObject, RLMObjectBase *newObject);
 
 @interface RLMMigration ()
 
 @property (nonatomic, strong) RLMRealm *oldRealm;
 @property (nonatomic, strong) RLMRealm *realm;
 
-+ (instancetype)migrationAtPath:(NSString *)path error:(NSError **)error;
+- (instancetype)initWithRealm:(RLMRealm *)realm oldRealm:(RLMRealm *)oldRealm;
 
-- (void)migrateWithBlock:(RLMMigrationBlock)block;
+- (void)execute:(RLMMigrationBlock)block;
 
 @end

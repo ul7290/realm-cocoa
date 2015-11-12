@@ -16,33 +16,36 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import "RLMObjectSchema.h"
+#import "RLMObjectSchema_Private.h"
 
-#import <tightdb/table.hpp>
+#import "object_schema.hpp"
+#import "RLMObject_Private.hpp"
+
+#import <realm/row.hpp>
+#import <vector>
+
+namespace realm {
+    class Table;
+    template<typename T> class BasicTableRef;
+    typedef BasicTableRef<Table> TableRef;
+}
+
+class RLMObservationInfo;
 
 // RLMObjectSchema private
 @interface RLMObjectSchema () {
     @public
-    // table accessor optimization
-    tightdb::TableRef _table;
+    std::vector<RLMObservationInfo *> _observedObjects;
 }
+@property (nonatomic) realm::Table *table;
 
-// writable redecleration
-@property (nonatomic, readwrite, copy) NSArray *properties;
+// shallow copy reusing properties and property map
+- (instancetype)shallowCopy;
 
-// class used for this object schema
-@property (nonatomic, readwrite, assign) Class objectClass;
-@property (nonatomic, readwrite, assign) Class accessorClass;
-@property (nonatomic, readwrite, assign) Class standaloneClass;
+// create realm::ObjectSchema copy
+- (realm::ObjectSchema)objectStoreCopy;
 
-@property (nonatomic, readwrite) RLMProperty *primaryKeyProperty;
-
-// returns a cached or new schema for a given object class
-// creates standalone accessor classes for the object schema if create is YES
-+(instancetype)schemaForObjectClass:(Class)objectClass;
-+(instancetype)schemaForObjectClass:(Class)objectClass createAccessors:(BOOL)create;
-
-// generate a schema from a table
-+(instancetype)schemaFromTableForClassName:(NSString *)className realm:(RLMRealm *)realm;
+// initialize with realm::ObjectSchema
++ (instancetype)objectSchemaForObjectStoreSchema:(realm::ObjectSchema &)objectSchema;
 
 @end

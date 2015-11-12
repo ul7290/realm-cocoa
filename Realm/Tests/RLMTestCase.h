@@ -17,7 +17,7 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import <XCTest/XCTest.h>
-#import <Realm/Realm.h>
+#import "RLMAssertions.h"
 #import "RLMTestObjects.h"
 
 #ifdef __cplusplus
@@ -26,6 +26,7 @@ extern "C" {
 NSString *RLMTestRealmPath(void);
 NSString *RLMDefaultRealmPath(void);
 NSString *RLMRealmPathForFile(NSString *);
+NSData *RLMGenerateKey(void);
 #ifdef __cplusplus
 }
 #endif
@@ -34,6 +35,18 @@ NSString *RLMRealmPathForFile(NSString *);
 
 - (RLMRealm *)realmWithTestPath;
 - (RLMRealm *)realmWithTestPathAndSchema:(RLMSchema *)schema;
-- (RLMRealm *)dynamicRealmWithTestPathAndSchema:(RLMSchema *)schema;
+
+- (RLMRealm *)inMemoryRealmWithIdentifier:(NSString *)identifier;
+- (RLMRealm *)readOnlyRealmWithPath:(NSString *)path error:(NSError **)error;
+
+- (void)deleteFiles;
+- (void)deleteRealmFileAtPath:(NSString *)realmPath;
+
+- (void)waitForNotification:(NSString *)expectedNote realm:(RLMRealm *)realm block:(dispatch_block_t)block;
+
+- (id)nonLiteralNil;
+
+- (void)dispatchAsync:(dispatch_block_t)block;
+- (void)dispatchAsyncAndWait:(dispatch_block_t)block;
 
 @end

@@ -50,6 +50,25 @@
 @implementation UTF8Object
 @end
 
+@implementation IndexedStringObject
++ (NSArray *)indexedProperties
+{
+    return @[@"stringCol"];
+}
+@end
+
+@implementation LinkStringObject
+@end
+
+@implementation LinkIndexedStringObject
+@end
+
+@implementation RequiredPropertiesObject
++ (NSArray *)requiredProperties {
+    return @[@"stringCol", @"binaryCol"];
+}
+@end
+
 #pragma mark AllTypesObject
 
 @implementation AllTypesObject
@@ -59,6 +78,9 @@
 @end
 
 @implementation LinkToAllTypesObject
+@end
+
+@implementation AllOptionalTypes
 @end
 
 #pragma mark - Real Life Objects
@@ -127,12 +149,15 @@
 @implementation AggregateObject
 @end
 
+#pragma mark PrimaryStringObject
 
 @implementation PrimaryStringObject
 + (NSString *)primaryKey {
     return @"stringCol";
 }
 @end
+
+#pragma mark ReadOnlyPropertyObject
 
 @interface ReadOnlyPropertyObject ()
 @property (readwrite) int readOnlyPropertyMadeReadWriteInClassExtension;
@@ -142,4 +167,32 @@
 - (NSNumber *)readOnlyUnsupportedProperty {
     return nil;
 }
+@end
+
+#pragma mark IntegerArrayPropertyObject
+
+@implementation IntegerArrayPropertyObject
+@end
+
+@implementation NumberObject
+@end
+
+@implementation NumberDefaultsObject
++ (nullable NSDictionary *)defaultPropertyValues {
+    return @{
+             @"intObj" : @1,
+             @"floatObj" : @2.2f,
+             @"doubleObj" : @3.3,
+             @"boolObj" : @NO,
+             };
+}
+@end
+
+#pragma mark FakeObject
+
+@implementation FakeObject
++ (NSArray *)ignoredProperties { return nil; }
++ (NSArray *)indexedProperties { return nil; }
++ (NSString *)primaryKey { return nil; }
++ (NSArray *)requiredProperties { return nil; }
 @end

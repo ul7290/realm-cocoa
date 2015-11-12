@@ -1,9 +1,9 @@
 #!/bin/sh
 
 ##################################################################################
-# Custom build tool for Realm Objective C binding.
+# Custom build tool for Realm Objective-C binding.
 #
-# (C) Copyright 2011-2014 by realm.io.
+# (C) Copyright 2011-2015 by realm.io.
 ##################################################################################
 
 # Warning: pipefail is not a POSIX compatible option, but on OS X it works just fine.
@@ -14,49 +14,65 @@ set -o pipefail
 set -e
 
 # You can override the version of the core library
-# Otherwise, use the default value
-if [ -z "$REALM_CORE_VERSION" ]; then
-    REALM_CORE_VERSION=0.84.0
-fi
+: ${REALM_CORE_VERSION:=0.94.4} # set to "current" to always use the current build
 
-PATH=/usr/local/bin:/usr/bin:/bin:/usr/libexec:$PATH
+# You can override the xcmode used
+: ${XCMODE:=xcodebuild} # must be one of: xcodebuild (default), xcpretty, xctool
+
+PATH=/usr/libexec:$PATH
 
 if ! [ -z "${JENKINS_HOME}" ]; then
     XCPRETTY_PARAMS="--no-utf --report junit --output build/reports/junit.xml"
     CODESIGN_PARAMS="CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO"
 fi
 
+export REALM_SKIP_DEBUGGER_CHECKS=YES
+
 usage() {
 cat <<EOF
 Usage: sh $0 command [argument]
 
 command:
-  download-core:           downloads core library (binary version)
-  clean [xcmode]:          clean up/remove all generated files
-  build [xcmode]:          builds iOS and OS X frameworks with release configuration
-  build-debug [xcmode]:    builds iOS and OS X frameworks with debug configuration
-  ios [xcmode]:            builds iOS framework with release configuration
-  ios-debug [xcmode]:      builds iOS framework with debug configuration
-  osx [xcmode]:            builds OS X framework with release configuration
-  osx-debug [xcmode]:      builds OS X framework with debug configuration
-  test-ios [xcmode]:       tests iOS framework with release configuration
-  test-ios-devices:        tests iOS on all attached iOS devices with release configuration
-  test-ios-devices-debug:  tests iOS on all attached iOS devices with debug configuration
-  test-osx [xcmode]:       tests OSX framework with release configuration
-  test [xcmode]:           tests iOS and OS X frameworks with release configuration
-  test-debug [xcmode]:     tests iOS and OS X frameworks with debug configuration
-  test-all [xcmode]:       tests iOS and OS X frameworks with debug and release configurations
-  examples [xcmode]:       builds all examples in examples/ in release configuration
-  examples-debug [xcmode]: builds all examples in examples/ in debug configuration
-  browser [xcmode]:        builds the RealmBrowser OSX app
-  verify [xcmode]:         cleans, removes docs/output/, then runs docs, test-all and examples
-  docs:                    builds docs in docs/output
-  get-version:             get the current version
-  set-version version:     set the version
+  clean:                clean up/remove all generated files
+  download-core:        downloads core library (binary version)
+  set-core-bitcode-symlink: set core symlink to bitcode version for Xcode 7+ or non-bitcode version otherwise
+  build:                builds all iOS  and OS X frameworks
+  ios-static:           builds fat iOS static framework
+  ios-dynamic:          builds iOS dynamic frameworks
+  ios-swift:            builds RealmSwift frameworks for iOS
+  watchos:              builds watchOS framwork
+  watchos-swift:        builds RealmSwift framework for watchOS
+  osx:                  builds OS X framework
+  osx-swift:            builds RealmSwift framework for OS X
+  test:                 tests all iOS and OS X frameworks
+  test-all:             tests all iOS and OS X frameworks in both Debug and Release configurations
+  test-ios-static:      tests static iOS framework on 32-bit and 64-bit simulators
+  test-ios-dynamic:     tests dynamic iOS framework on 32-bit and 64-bit simulators
+  test-ios-swift:       tests RealmSwift iOS framework on 32-bit and 64-bit simulators
+  test-ios-devices:     tests ObjC & Swift iOS frameworks on all attached iOS devices
+  test-ios-devices-objc:  tests ObjC iOS framework on all attached iOS devices
+  test-ios-devices-swift: tests Swift iOS framework on all attached iOS devices
+  test-osx:             tests OS X framework
+  test-osx-swift:       tests RealmSwift OS X framework
+  verify:               verifies docs, osx, osx-swift, ios-static, ios-dynamic, ios-swift, ios-device in both Debug and Release configurations
+  docs:                 builds docs in docs/output
+  examples:             builds all examples
+  examples-ios:         builds all static iOS examples
+  examples-ios-swift:   builds all Swift iOS examples
+  examples-osx:         builds all OS X examples
+  get-version:          get the current version
+  set-version version:  set the version
+  cocoapods-setup:      download realm-core and create a stub RLMPlatform.h file to enable building via CocoaPods
+
 
 argument:
-  xcmode:  xcodebuild (default), xcpretty or xctool
   version: version in the x.y.z format
+
+environment variables:
+  XCMODE: xcodebuild (default), xcpretty or xctool
+  CONFIGURATION: Debug or Release (default)
+  REALM_CORE_VERSION: version in x.y.z format or "current" to use local build
+  REALM_EXTRA_BUILD_ARGUMENTS: additional arguments to pass to the build tool
 EOF
 }
 
@@ -66,9 +82,9 @@ EOF
 
 xcode() {
     mkdir -p build/DerivedData
-    CMD="xcodebuild -IDECustomDerivedDataLocation=build/DerivedData $@"
+    CMD="xcodebuild -IDECustomDerivedDataLocation=build/DerivedData $@ $REALM_EXTRA_BUILD_ARGUMENTS"
     echo "Building with command:" $CMD
-    eval $CMD
+    eval "$CMD"
 }
 
 xc() {
@@ -85,9 +101,103 @@ xc() {
     fi
 }
 
-xcrealm() {
-    PROJECT=Realm.xcodeproj
-    xc "-project $PROJECT $@"
+copy_bcsymbolmap() {
+    find "$1" -name '*.bcsymbolmap' -type f -exec cp {} "$2" \;
+}
+
+build_ios_combined() {
+    local scheme="$1"
+    local module_name="$2"
+    local scope_suffix="$3"
+    local version_suffix="$4"
+    local config="$CONFIGURATION"
+
+    # Derive build paths
+    local build_products_path="build/DerivedData/Realm/Build/Products"
+    local product_name="$module_name.framework"
+    local binary_path="$module_name"
+    local iphoneos_path="$build_products_path/$config-iphoneos$scope_suffix/$product_name"
+    local iphonesimulator_path="$build_products_path/$config-iphonesimulator$scope_suffix/$product_name"
+    local out_path="build/ios$scope_suffix$version_suffix"
+
+    # Build for each platform
+    xc "-scheme '$scheme' -configuration $config -sdk iphoneos"
+    xc "-scheme '$scheme' -configuration $config -sdk iphonesimulator -destination 'name=iPhone 6' ONLY_ACTIVE_ARCH=NO"
+
+    # Combine .swiftmodule
+    if [ -d $iphonesimulator_path/Modules/$module_name.swiftmodule ]; then
+      cp $iphonesimulator_path/Modules/$module_name.swiftmodule/* $iphoneos_path/Modules/$module_name.swiftmodule/
+    fi
+    
+    # Copy *.bcsymbolmap to .framework for submitting app with bitcode
+    copy_bcsymbolmap "$build_products_path/$config-iphoneos$scope_suffix" "$iphoneos_path"
+
+    # Retrieve build products
+    clean_retrieve $iphoneos_path $out_path $product_name
+
+    # Combine ar archives
+    xcrun lipo -create "$iphonesimulator_path/$binary_path" "$iphoneos_path/$binary_path" -output "$out_path/$product_name/$module_name"
+}
+
+build_watchos_combined() {
+    local scheme="$1"
+    local module_name="$2"
+    local scope_suffix="$3"
+    local config="$CONFIGURATION"
+
+    # Derive build paths
+    local build_products_path="build/DerivedData/Realm/Build/Products"
+    local product_name="$module_name.framework"
+    local binary_path="$module_name"
+    local watchos_path="$build_products_path/$config-watchos$scope_suffix/$product_name"
+    local watchsimulator_path="$build_products_path/$config-watchsimulator$scope_suffix/$product_name"
+    local out_path="build/watchos$scope_suffix"
+
+    # Build for each platform
+    xc "-scheme '$scheme' -configuration $config -sdk watchos"
+    xc "-scheme '$scheme' -configuration $config -sdk watchsimulator -destination 'name=Apple Watch - 42mm' ONLY_ACTIVE_ARCH=NO"
+
+    # Combine .swiftmodule
+    if [ -d $watchsimulator_path/Modules/$module_name.swiftmodule ]; then
+      cp $watchsimulator_path/Modules/$module_name.swiftmodule/* $watchos_path/Modules/$module_name.swiftmodule/
+    fi
+    
+    # Copy *.bcsymbolmap
+    copy_bcsymbolmap "$build_products_path/$config-watchos$scope_suffix" "$watchos_path"
+
+    # Retrieve build products
+    clean_retrieve $watchos_path $out_path $product_name
+
+    # Combine ar archives
+    xcrun lipo -create "$watchsimulator_path/$binary_path" "$watchos_path/$binary_path" -output "$out_path/$product_name/$module_name"
+}
+
+xc_work_around_rdar_23055637() {
+    # xcodebuild times out waiting for the iOS simulator to launch if it takes > 120 seconds for the tests to
+    # build (<http://openradar.appspot.com/23055637>). Work around this by having the test phases intentionally
+    # exit after they finish building the first time, then run the tests for real.
+    ( REALM_EXIT_AFTER_BUILDING_TESTS=YES xc "$1" ) || true
+    xc "$1"
+}
+
+clean_retrieve() {
+  mkdir -p "$2"
+  rm -rf "$2/$3"
+  cp -R "$1" "$2"
+}
+
+move_to_clean_dir() {
+    rm -rf "$2"
+    mkdir -p "$2"
+    mv "$1" "$2"
+}
+
+shutdown_simulators() {
+    # Shut down simulators until there's no booted ones left
+    # Only do one at a time because devices sometimes show up multiple times
+    while xcrun simctl list | grep -q Booted; do
+      xcrun simctl list | grep Booted | sed 's/.* (\(.*\)) (Booted)/\1/' | head -n 1 | xargs xcrun simctl shutdown
+    done
 }
 
 ######################################
@@ -105,20 +215,64 @@ test_ios_devices() {
     done <<< "$serial_numbers_str"
     if [[ ${#serial_numbers[@]} == 0 ]]; then
         echo "At least one iOS device must be connected to this computer to run device tests"
+        if [ -z "${JENKINS_HOME}" ]; then
+            # Don't fail if running locally and there's no device
+            exit 0
+        fi
         exit 1
     fi
-    configuration="$1"
+    scheme="$1"
+    configuration="$2"
+    failed=0
     for device in "${serial_numbers[@]}"; do
-        xcrealm "-scheme 'iOS Device Tests' -configuration $configuration -destination 'id=$device' test"
+        xc "-scheme '$scheme' -configuration $configuration -destination 'id=$device' test" || failed=1
     done
-    exit 0
+    return $failed
+}
+
+######################################
+# Docs
+######################################
+
+build_docs() {
+    local language="$1"
+    local version=$(sh build.sh get-version)
+
+    local xcodebuild_arguments="--objc,Realm/Realm.h,-x,objective-c,-isysroot,$(xcrun --show-sdk-path),-I,$(pwd)"
+    local module="Realm"
+    local objc="--objc"
+
+    if [[ "$language" == "swift" ]]; then
+        : ${REALM_SWIFT_VERSION:=2.1}
+        ./build.sh set-swift-version
+        xcodebuild_arguments="-scheme,RealmSwift"
+        module="RealmSwift"
+        objc=""
+    fi
+
+    touch Realm/RLMPlatform.h # jazzy will fail if it can't find all public header files
+    jazzy \
+      ${objc} \
+      --clean \
+      --author Realm \
+      --author_url https://realm.io \
+      --github_url https://github.com/realm/realm-cocoa \
+      --github-file-prefix https://github.com/realm/realm-cocoa/tree/v${version} \
+      --module-version ${version} \
+      --xcodebuild-arguments ${xcodebuild_arguments} \
+      --module ${module} \
+      --root-url https://realm.io/docs/${language}/${version}/api/ \
+      --output $(pwd)/docs/${language}_output \
+      --template-directory $(pwd)/docs/templates
+
+    rm Realm/RLMPlatform.h
 }
 
 ######################################
 # Input Validation
 ######################################
 
-if [ "$#" -eq 0 -o "$#" -gt 2 ]; then
+if [ "$#" -eq 0 -o "$#" -gt 3 ]; then
     usage
     exit 1
 fi
@@ -127,24 +281,22 @@ fi
 # Variables
 ######################################
 
-# Xcode sets this variable - set to current directory if running standalone
-if [ -z "$SRCROOT" ]; then
-    SRCROOT="$(pwd)"
-fi
-
 download_core() {
     echo "Downloading dependency: core ${REALM_CORE_VERSION}"
-    TMP_DIR="/tmp/core_bin"
+    TMP_DIR="$TMPDIR/core_bin"
     mkdir -p "${TMP_DIR}"
-    CORE_TMP_ZIP="${TMP_DIR}/core-${REALM_CORE_VERSION}.zip.tmp"
-    CORE_ZIP="${TMP_DIR}/core-${REALM_CORE_VERSION}.zip"
-    if [ ! -f "${CORE_ZIP}" ]; then
-        curl -L -s "http://static.realm.io/downloads/core/realm-core-${REALM_CORE_VERSION}.zip" -o "${CORE_TMP_ZIP}"
-        mv "${CORE_TMP_ZIP}" "${CORE_ZIP}"
+    CORE_TMP_TAR="${TMP_DIR}/core-${REALM_CORE_VERSION}.tar.bz2.tmp"
+    CORE_TAR="${TMP_DIR}/core-${REALM_CORE_VERSION}.tar.bz2"
+    if [ ! -f "${CORE_TAR}" ]; then
+        curl -f -L -s "https://static.realm.io/downloads/core/realm-core-${REALM_CORE_VERSION}.tar.bz2" -o "${CORE_TMP_TAR}" ||
+          (echo "Downloading core failed. Please try again once you have an Internet connection." && exit 1)
+        mv "${CORE_TMP_TAR}" "${CORE_TAR}"
     fi
+
     (
         cd "${TMP_DIR}"
-        unzip "${CORE_ZIP}"
+        rm -rf core
+        tar xjf "${CORE_TAR}"
         mv core core-${REALM_CORE_VERSION}
     )
 
@@ -154,9 +306,18 @@ download_core() {
 }
 
 COMMAND="$1"
-XCMODE="$2"
-: ${XCMODE:=xcodebuild} # must be one of: xcodebuild (default), xcpretty, xctool
 
+# Use Debug config if command ends with -debug, otherwise default to Release
+case "$COMMAND" in
+    *-debug)
+        COMMAND="${COMMAND%-debug}"
+        CONFIGURATION="Debug"
+        ;;
+    *) CONFIGURATION=${CONFIGURATION:-Release}
+esac
+export CONFIGURATION
+
+source "$(dirname "$0")/scripts/swift-version.sh"
 
 case "$COMMAND" in
 
@@ -164,19 +325,19 @@ case "$COMMAND" in
     # Clean
     ######################################
     "clean")
-        find . -type d -name build -ls -delete
+        find . -type d -name build -exec rm -r "{}" +\;
         exit 0
         ;;
 
     ######################################
-    # Download Core Library
+    # Core
     ######################################
     "download-core")
         if [ "$REALM_CORE_VERSION" = "current" ]; then
             echo "Using version of core already in core/ directory"
             exit 0
         fi
-        if [ -d core -a -d ../tightdb -a ! -L core ]; then
+        if [ -d core -a -d ../realm-core -a ! -L core ]; then
           # Allow newer versions than expected for local builds as testing
           # with unreleased versions is one of the reasons to use a local build
           if ! $(grep -i "${REALM_CORE_VERSION} Release notes" core/release_notes.txt >/dev/null); then
@@ -189,7 +350,10 @@ case "$COMMAND" in
             echo "core is not a symlink. Deleting..."
             rm -rf core
             download_core
-        elif ! $(head -n 1 core/release_notes.txt | grep -i ${REALM_CORE_VERSION} >/dev/null); then
+        # With a prebuilt version we only want to check the first non-empty
+        # line so that checking out an older commit will download the
+        # appropriate version of core if the already-present version is too new
+        elif ! $(grep -m 1 . core/release_notes.txt | grep -i "${REALM_CORE_VERSION} RELEASE NOTES" >/dev/null); then
             download_core
         else
             echo "The core library seems to be up to date."
@@ -197,38 +361,133 @@ case "$COMMAND" in
         exit 0
         ;;
 
+    "set-core-bitcode-symlink")
+        cd core
+        rm -f librealm-ios.a librealm-ios-dbg.a
+        if [ $REALM_SWIFT_VERSION = '1.2' ]; then
+            echo "Using core without bitcode"
+            ln -s librealm-ios-no-bitcode.a librealm-ios.a
+            ln -s librealm-ios-no-bitcode-dbg.a librealm-ios-dbg.a
+        else
+            echo "Using core with bitcode"
+            ln -s librealm-ios-bitcode.a librealm-ios.a
+            ln -s librealm-ios-bitcode-dbg.a librealm-ios-dbg.a
+        fi
+        ;;
+
+    ######################################
+    # Object Store
+    ######################################
+    "push-object-store-changes")
+        commit="$2"
+        path="$3"
+        if [ -z "$commit" -o -z "$path" ]; then
+            echo "usage: sh build.sh push-object-store-changes [base commit] [path to objectore repo]"
+            exit 1
+        fi
+
+        # List all commits since $commit which touched the objecstore, generate
+        # patches for each of them, and then apply those patches to the
+        # objectstore repo
+        git rev-list --reverse $commit..HEAD -- Realm/ObjectStore \
+            | xargs -I@ git format-patch --stdout @^! Realm/ObjectStore \
+            | git -C $path am -p 3
+        ;;
+
+    "pull-object-store-changes")
+        commit="$2"
+        path="$3"
+        if [ -z "$commit" -o -z "$path" ]; then
+            echo "usage: sh build.sh pull-object-store-changes [base commit] [path to objectore repo]"
+            exit 1
+        fi
+
+        git -C $path format-patch --stdout $commit..HEAD | git am --directory Realm/ObjectStore
+        ;;
+
+    ######################################
+    # Swift versioning
+    ######################################
+    "set-swift-version")
+        version="$2"
+        if [[ -z "$version" ]]; then
+            version="$REALM_SWIFT_VERSION"
+        fi
+
+        # Update the symlinks to point to the correct verion of the source, and
+        # then tell git to ignore the fact that we just changed a tracked file so
+        # that the new symlink doesn't accidentally get committed
+        rm -rf RealmSwift
+        ln -s "RealmSwift-swift$version" RealmSwift
+        git update-index --assume-unchanged RealmSwift || true
+
+        cd Realm/Tests
+        rm -rf Swift
+        ln -s "Swift$version" Swift
+        git update-index --assume-unchanged Swift || true
+        exit 0
+        ;;
+
+    "prelaunch-simulator")
+        sh $(dirname $0)/scripts/reset-simulators.sh
+        ;;
+
     ######################################
     # Building
     ######################################
     "build")
-        sh build.sh ios "$XCMODE"
-        sh build.sh osx "$XCMODE"
+        sh build.sh ios-static
+        sh build.sh ios-dynamic
+        sh build.sh ios-swift
+        sh build.sh watchos
+        sh build.sh watchos-swift
+        sh build.sh osx
+        sh build.sh osx-swift
         exit 0
         ;;
 
-    "build-debug")
-        sh build.sh ios-debug "$XCMODE"
-        sh build.sh osx-debug "$XCMODE"
+    "ios-static")
+        build_ios_combined 'Realm iOS static' Realm "-static"
         exit 0
         ;;
 
-    "ios")
-        xcrealm "-scheme iOS -configuration Release-Combined"
+    "ios-dynamic")
+        build_ios_combined "Realm" Realm
+        exit 0
+        ;;
+
+    "ios-swift")
+        sh build.sh ios-dynamic
+        build_ios_combined RealmSwift RealmSwift '' "/swift-$REALM_SWIFT_VERSION"
+        cp -R build/ios/Realm.framework build/ios/swift-$REALM_SWIFT_VERSION
+        exit 0
+        ;;
+
+    "watchos")
+        build_watchos_combined Realm Realm
+        exit 0
+        ;;
+
+    "watchos-swift")
+        sh build.sh watchos
+        build_watchos_combined RealmSwift RealmSwift
         exit 0
         ;;
 
     "osx")
-        xcrealm "-scheme OSX -configuration Release"
+        xc "-scheme Realm -configuration $CONFIGURATION"
+        rm -rf build/osx
+        mkdir build/osx
+        cp -R build/DerivedData/Realm/Build/Products/$CONFIGURATION/Realm.framework build/osx
         exit 0
         ;;
 
-    "ios-debug")
-        xcrealm "-scheme iOS -configuration Debug"
-        exit 0
-        ;;
-
-    "osx-debug")
-        xcrealm "-scheme OSX -configuration Debug"
+    "osx-swift")
+        sh build.sh osx
+        xc "-scheme 'RealmSwift' -configuration $CONFIGURATION build"
+        destination="build/osx/swift-$REALM_SWIFT_VERSION"
+        clean_retrieve "build/DerivedData/Realm/Build/Products/$CONFIGURATION/RealmSwift.framework" "$destination" "RealmSwift.framework"
+        cp -R build/osx/Realm.framework "$destination"
         exit 0
         ;;
 
@@ -238,64 +497,174 @@ case "$COMMAND" in
     "test")
         set +e # Run both sets of tests even if the first fails
         failed=0
-        sh build.sh test-ios "$XCMODE" || failed=1
-        sh build.sh test-osx "$XCMODE" || failed=1
-        exit $failed
-        ;;
-
-    "test-debug")
-        set +e
-        failed=0
-        sh build.sh test-ios-debug "$XCMODE" || failed=1
-        sh build.sh test-osx-debug "$XCMODE" || failed=1
+        sh build.sh test-ios-static || failed=1
+        sh build.sh test-ios-dynamic || failed=1
+        sh build.sh test-ios-swift || failed=1
+        sh build.sh test-ios-devices || failed=1
+        sh build.sh test-osx || failed=1
+        sh build.sh test-osx-swift || failed=1
         exit $failed
         ;;
 
     "test-all")
         set +e
         failed=0
-        sh build.sh test "$XCMODE" || failed=1
-        sh build.sh test-debug "$XCMODE" || failed=1
+        sh build.sh test || failed=1
+        sh build.sh test-debug || failed=1
         exit $failed
         ;;
 
-    "test-ios")
-        xcrealm "-scheme iOS -configuration Release-Combined -sdk iphonesimulator -destination 'name=iPhone 6' test"
+    "test-ios-static")
+        xc_work_around_rdar_23055637 "-scheme 'Realm iOS static' -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 6' test"
+        shutdown_simulators
+        xc_work_around_rdar_23055637 "-scheme 'Realm iOS static' -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 4s' test"
+        exit 0
+        ;;
+
+    "test-ios7-static")
+        xc_work_around_rdar_23055637 "-scheme 'Realm iOS static' -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 5S,OS=7.1' test"
+        shutdown_simulators
+        xc_work_around_rdar_23055637 "-scheme 'Realm iOS static' -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 4s,OS=7.1' test"
+        exit 0
+        ;;
+
+    "test-ios-dynamic")
+        xc_work_around_rdar_23055637 "-scheme Realm -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 6' test"
+        shutdown_simulators
+        xc_work_around_rdar_23055637 "-scheme Realm -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 4s' test"
+        exit 0
+        ;;
+
+    "test-ios-swift")
+        xc "-scheme RealmSwift -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 6' build test"
+        shutdown_simulators
+        xc "-scheme RealmSwift -configuration $CONFIGURATION -sdk iphonesimulator -destination 'name=iPhone 4s' build test"
         exit 0
         ;;
 
     "test-ios-devices")
-        test_ios_devices "Release"
+        failed=0
+        trap "failed=1" ERR
+        sh build.sh test-ios-devices-objc
+        sh build.sh test-ios-devices-swift
+        exit $failed
+        ;;
+
+    "test-ios-devices-objc")
+        test_ios_devices "Realm iOS static" "$CONFIGURATION"
+        exit $?
+        ;;
+
+    "test-ios-devices-swift")
+        test_ios_devices "RealmSwift" "$CONFIGURATION"
+        exit $?
         ;;
 
     "test-osx")
-        xcrealm "-scheme OSX -configuration Release test"
+        COVERAGE_PARAMS=""
+        if [[ "$CONFIGURATION" == "Debug" ]]; then
+            COVERAGE_PARAMS="GCC_GENERATE_TEST_COVERAGE_FILES=YES GCC_INSTRUMENT_PROGRAM_FLOW_ARCS=YES"
+        fi
+        xc "-scheme Realm -configuration $CONFIGURATION test $COVERAGE_PARAMS"
         exit 0
         ;;
 
-    "test-ios-debug")
-        xcrealm "-scheme iOS -configuration Debug -sdk iphonesimulator -destination 'name=iPhone 6' test"
+    "test-osx-swift")
+        xc "-scheme RealmSwift -configuration $CONFIGURATION test"
         exit 0
         ;;
 
-    "test-ios-devices-debug")
-        test_ios_devices "Debug"
-        ;;
-
-    "test-osx-debug")
-        xcrealm "-scheme OSX -configuration Debug test"
-        exit 0
-        ;;
-
-    "test-cover")
-        echo "Not yet implemented"
-        exit 0
-        ;;
-
+    ######################################
+    # Full verification
+    ######################################
     "verify")
+        sh build.sh verify-cocoapods
+        sh build.sh verify-docs
+        sh build.sh verify-osx
+        sh build.sh verify-osx-debug
+        sh build.sh verify-osx-swift
+        sh build.sh verify-osx-swift-debug
+        sh build.sh verify-ios-static
+        sh build.sh verify-ios-static-debug
+        sh build.sh verify-ios7-static
+        sh build.sh verify-ios7-static-debug
+        sh build.sh verify-ios-dynamic
+        sh build.sh verify-ios-dynamic-debug
+        sh build.sh verify-ios-swift
+        sh build.sh verify-ios-swift-debug
+        sh build.sh verify-ios-device-objc
+        sh build.sh verify-ios-device-swift
+        sh build.sh verify-watchos
+        ;;
+
+    "verify-cocoapods")
+        cd examples/installation
+        # FIXME: tests are duplicated to work around https://github.com/realm/realm-cocoa/issues/2701
+        ./build.sh test-ios-objc-cocoapods || ./build.sh test-ios-objc-cocoapods || exit 1
+        ./build.sh test-ios-swift-cocoapods || ./build.sh test-ios-swift-cocoapods || exit 1
+        ;;
+
+    "verify-osx")
+        sh build.sh test-osx
+        sh build.sh examples-osx
+
+        (
+            cd examples/osx/objc/build/DerivedData/RealmExamples/Build/Products/$CONFIGURATION
+            DYLD_FRAMEWORK_PATH=. ./JSONImport >/dev/null
+        ) || exit 1
+        exit 0
+        ;;
+
+    "verify-osx-swift")
+        sh build.sh test-osx-swift
+        exit 0
+        ;;
+
+    "verify-ios-static")
+        sh build.sh test-ios-static
+        sh build.sh examples-ios
+        ;;
+
+    "verify-ios7-static")
+        sh build.sh test-ios7-static
+        ;;
+
+    "verify-ios-dynamic")
+        sh build.sh test-ios-dynamic
+        ;;
+
+    "verify-ios-swift")
+        sh build.sh test-ios-swift
+        sh build.sh examples-ios-swift
+        ;;
+
+    "verify-ios-device-objc")
+        sh build.sh test-ios-devices-objc
+        exit 0
+        ;;
+
+    "verify-ios-device-swift")
+        sh build.sh test-ios-devices-swift
+        exit 0
+        ;;
+
+    "verify-docs")
         sh build.sh docs
-        sh build.sh test-all "$XCMODE"
-        sh build.sh examples "$XCMODE"
+        for lang in swift objc; do
+            undocumented="docs/${lang}_output/undocumented.txt"
+            if [ -s "$undocumented" ]; then
+              echo "Undocumented Realm $lang declarations:"
+              cat "$undocumented"
+              exit 1
+            fi
+        done
+        exit 0
+        ;;
+
+    "verify-watchos")
+        if [ $REALM_SWIFT_VERSION != '1.2' ]; then
+            sh build.sh watchos-swift
+        fi
         exit 0
         ;;
 
@@ -303,7 +672,8 @@ case "$COMMAND" in
     # Docs
     ######################################
     "docs")
-        sh scripts/build-docs.sh
+        build_docs objc
+        build_docs swift
         exit 0
         ;;
 
@@ -312,39 +682,48 @@ case "$COMMAND" in
     ######################################
     "examples")
         sh build.sh clean
-
-        cd examples
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme Simple -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme TableView -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme Migration -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project osx/objc/RealmExamples.xcodeproj -scheme JSONImport -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme Simple -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme TableView -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme Migration -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme Encryption -configuration Release build ${CODESIGN_PARAMS}"
+        sh build.sh examples-ios
+        sh build.sh examples-ios-swift
+        sh build.sh examples-osx
         exit 0
         ;;
 
-    "examples-debug")
-        sh build.sh clean
-        cd examples
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme Simple -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme TableView -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme Migration -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project osx/objc/RealmExamples.xcodeproj -scheme JSONImport -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme Simple -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme TableView -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme Migration -configuration Debug build ${CODESIGN_PARAMS}"
-        xc "-project ios/swift/RealmExamples.xcodeproj -scheme Encryption -configuration Debug build ${CODESIGN_PARAMS}"
+    "examples-ios")
+        if [[ -d "examples/ios/objc" ]]; then
+            project="examples/ios/objc/RealmExamples.xcodeproj"
+        elif [[ "$REALM_SWIFT_VERSION" = 1.2 ]]; then
+            project="examples/ios/xcode-6/objc/RealmExamples.xcodeproj"
+        else
+            project="examples/ios/xcode-7/objc/RealmExamples.xcodeproj"
+        fi
+
+        xc "-project $project -scheme Simple -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme TableView -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme Migration -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme Backlink -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme GroupedTableView -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme Encryption -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+
+        if [ ! -z "${JENKINS_HOME}" ]; then
+            xc "-project $project -scheme Extension -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        fi
+
         exit 0
         ;;
 
-    ######################################
-    # Browser
-    ######################################
-    "browser")
-        xc "-project tools/RealmBrowser/RealmBrowser.xcodeproj -scheme RealmBrowser -configuration Release clean build ${CODESIGN_PARAMS}"
+    "examples-ios-swift")
+        project="examples/ios/swift-$REALM_SWIFT_VERSION/RealmExamples.xcodeproj"
+        xc "-project $project -scheme Simple -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme TableView -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme Migration -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme Encryption -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme Backlink -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
+        xc "-project $project -scheme GroupedTableView -configuration $CONFIGURATION build ${CODESIGN_PARAMS}"
         exit 0
+        ;;
+
+    "examples-osx")
+        xc "-project examples/osx/objc/RealmExamples.xcodeproj -scheme JSONImport -configuration ${CONFIGURATION} build ${CODESIGN_PARAMS}"
         ;;
 
     ######################################
@@ -358,7 +737,7 @@ case "$COMMAND" in
 
     "set-version")
         realm_version="$2"
-        version_files="Realm/Realm-Info.plist tools/RealmBrowser/RealmBrowser/RealmBrowser-Info.plist"
+        version_files="Realm/Realm-Info.plist"
 
         if [ -z "$realm_version" ]; then
             echo "You must specify a version."
@@ -375,135 +754,248 @@ case "$COMMAND" in
     # CocoaPods
     ######################################
     "cocoapods-setup")
-        sh build.sh download-core
+        if [[ "$2" != "without-core" ]]; then
+            sh build.sh download-core
+            mv core/librealm.a core/librealm-osx.a
+            if [[ "$REALM_SWIFT_VERSION" = "1.2" ]]; then
+                echo 'Installing for Xcode 6.'
+                mv core/librealm-ios-no-bitcode.a core/librealm-ios.a
+              else
+                echo 'Installing for Xcode 7+.'
+                mv core/librealm-ios-bitcode.a core/librealm-ios.a
+            fi
+        fi
 
-        # CocoaPods seems to not like symlinks
-        mv core tmp
-        mv $(readlink tmp) core
-        rm tmp
+        # CocoaPods won't automatically preserve files referenced via symlinks
+        for symlink in $(find . -not -path "./.git/*" -type l); do
+          if [[ -L "$symlink" ]]; then
+            link="$(dirname "$symlink")/$(readlink "$symlink")"
+            rm "$symlink"
+            cp -RH "$link" "$symlink"
+          fi
+        done
 
-        mkdir include-ios
-        cp -R core/include/* include-ios
-        mkdir include-ios/Realm
-        cp Realm/*.{h,hpp} include-ios/Realm
-        cp Realm/ios/*.h include-ios/Realm
-
-        mkdir include-osx
-        cp -R core/include/* include-osx
-        mkdir include-osx/Realm
-        cp Realm/*.{h,hpp} include-osx/Realm
-        cp Realm/osx/*.h include-osx/Realm
+        if [[ "$2" != "without-core" ]]; then
+          # CocoaPods doesn't support multiple header_mappings_dir, so combine
+          # both sets of headers into a single directory
+          rm -rf include
+          # Create uppercase `Realm` header directory for a case-sensitive filesystem.
+          # Both `Realm` and `realm` directories are required.
+          if [ ! -e core/include/Realm ]; then
+            cp -R core/include/realm core/include/Realm
+          fi
+          cp -R core/include include
+          mkdir -p include/Realm
+          cp Realm/*.{h,hpp} include/Realm
+          cp Realm/ObjectStore/*.hpp include/Realm
+          cp Realm/ObjectStore/impl/*.hpp include/Realm
+          cp Realm/ObjectStore/impl/apple/*.hpp include/Realm
+          touch include/Realm/RLMPlatform.h
+        fi
         ;;
 
     ######################################
     # Release packaging
     ######################################
-    "package-browser")
-        mkdir -p test-reports
-        cd tightdb_objc/tools/RealmBrowser
-        xcodebuild -project RealmBrowser.xcodeproj -scheme RealmBrowser -IDECustomDerivedDataLocation=../../build/DerivedData -configuration Release clean build CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO
-        cd ${WORKSPACE}/tightdb_objc/build/DerivedData/RealmBrowser/Build/Products/Release
-        zip -r realm-browser.zip Realm\ Browser.app
-        ;;
-
-    "package-docs")
-        cd tightdb_objc
-        sh build.sh docs
-        cd docs/output/*
-        tar --exclude='realm-docset.tgz' \
-            --exclude='realm.xar' \
-            -cvzf \
-            realm-docs.tgz *
-        ;;
 
     "package-examples")
         cd tightdb_objc
         ./scripts/package_examples.rb
-        zip --symlinks -r realm-obj-examples.zip examples
+        zip --symlinks -r realm-examples.zip examples -x "examples/installation/*"
         ;;
 
     "package-test-examples")
-        ( mkdir ios; cd ios; unzip ../realm-framework-ios.zip )
-        ( mkdir osx; cd osx; unzip ../realm-framework-osx.zip )
-        unzip realm-obj-examples.zip
+        if ! VERSION=$(echo realm-objc-*.zip | grep -o '\d*\.\d*\.\d*-[a-z]*'); then
+            VERSION=$(echo realm-objc-*.zip | grep -o '\d*\.\d*\.\d*')
+        fi
+        OBJC="realm-objc-${VERSION}"
+        SWIFT="realm-swift-${VERSION}"
+        unzip ${OBJC}.zip
 
-        rm *.zip
-        cd examples
+        cp $0 ${OBJC}
+        cp -r $(dirname $0)/scripts ${OBJC}
+        cd ${OBJC}
+        REALM_SWIFT_VERSION=1.2 sh build.sh examples-ios
+        REALM_SWIFT_VERSION=2.1 sh build.sh examples-ios
+        sh build.sh examples-osx
+        cd ..
+        rm -rf ${OBJC}
 
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme Simple -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme TableView -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project ios/objc/RealmExamples.xcodeproj -scheme Migration -configuration Release build ${CODESIGN_PARAMS}"
-        xc "-project osx/objc/RealmExamples.xcodeproj -scheme JSONImport -configuration Release build ${CODESIGN_PARAMS}"
+        unzip ${SWIFT}.zip
+
+        cp $0 ${SWIFT}
+        cp -r $(dirname $0)/scripts ${SWIFT}
+        cd ${SWIFT}
+        REALM_SWIFT_VERSION=1.2 sh build.sh examples-ios-swift
+        REALM_SWIFT_VERSION=2.1 sh build.sh examples-ios-swift
+        cd ..
+        rm -rf ${SWIFT}
         ;;
 
-    "package-ios")
+    "package-ios-static")
         cd tightdb_objc
-        sh build.sh test-ios "$XCMODE"
-        sh build.sh examples "$XCMODE"
 
-        cd build/ios
-        zip --symlinks -r realm-framework-ios.zip Realm.framework
+        REALM_SWIFT_VERSION=1.2 sh build.sh prelaunch-simulator
+        REALM_SWIFT_VERSION=1.2 sh build.sh test-ios-static
+        REALM_SWIFT_VERSION=1.2 sh build.sh ios-static
+        move_to_clean_dir build/ios-static/Realm.framework xcode-6
+        rm -rf build
+
+        REALM_SWIFT_VERSION=2.1 sh build.sh prelaunch-simulator
+        REALM_SWIFT_VERSION=2.1 sh build.sh test-ios-static
+        REALM_SWIFT_VERSION=2.1 sh build.sh ios-static
+        move_to_clean_dir build/ios-static/Realm.framework xcode-7
+
+        zip --symlinks -r build/ios-static/realm-framework-ios.zip xcode-6 xcode-7
+        ;;
+
+    "package-ios-dynamic")
+        cd tightdb_objc
+        REALM_SWIFT_VERSION=1.2 sh build.sh prelaunch-simulator
+        REALM_SWIFT_VERSION=1.2 sh build.sh ios-dynamic
+        move_to_clean_dir build/ios/Realm.framework xcode-6
+        rm -rf build
+
+        REALM_SWIFT_VERSION=2.1 sh build.sh prelaunch-simulator
+        REALM_SWIFT_VERSION=2.1 sh build.sh ios-dynamic
+        move_to_clean_dir build/ios/Realm.framework xcode-7
+
+        zip --symlinks -r build/ios/realm-dynamic-framework-ios.zip xcode-6 xcode-7
         ;;
 
     "package-osx")
         cd tightdb_objc
-        sh build.sh test-osx "$XCMODE"
+        REALM_SWIFT_VERSION=2.1 sh build.sh test-osx
 
         cd build/DerivedData/Realm/Build/Products/Release
         zip --symlinks -r realm-framework-osx.zip Realm.framework
         ;;
 
+    "package-ios-swift")
+        cd tightdb_objc
+        for version in 1.2 2.1; do
+            rm -rf build/ios/Realm.framework
+            REALM_SWIFT_VERSION=$version sh build.sh prelaunch-simulator
+            REALM_SWIFT_VERSION=$version sh build.sh ios-swift
+        done
+
+        cd build/ios
+        zip --symlinks -r realm-swift-framework-ios.zip swift-1.2 swift-2.1
+        ;;
+
+    "package-osx-swift")
+        cd tightdb_objc
+        REALM_SWIFT_VERSION=1.2 sh build.sh osx-swift
+        REALM_SWIFT_VERSION=2.1 sh build.sh osx-swift
+
+        cd build/osx
+        zip --symlinks -r realm-swift-framework-osx.zip swift-1.2 swift-2.1
+        ;;
+
+    "package-watchos")
+        cd tightdb_objc
+        REALM_SWIFT_VERSION=2.1 sh build.sh watchos
+
+        cd build/watchos
+        zip --symlinks -r realm-framework-watchos.zip Realm.framework
+        ;;
+
+    "package-watchos-swift")
+        cd tightdb_objc
+        REALM_SWIFT_VERSION=2.1 sh build.sh watchos-swift
+
+        cd build/watchos
+        zip --symlinks -r realm-swift-framework-watchos.zip RealmSwift.framework Realm.framework
+        ;;
+
     "package-release")
-        TEMPDIR=$(mktemp -d /tmp/realm-release-package.XXXX)
+        LANG="$2"
+        TEMPDIR=$(mktemp -d $TMPDIR/realm-release-package-${LANG}.XXXX)
 
         cd tightdb_objc
         VERSION=$(sh build.sh get-version)
         cd ..
 
-        mkdir -p ${TEMPDIR}/realm-cocoa-${VERSION}/osx
-        mkdir -p ${TEMPDIR}/realm-cocoa-${VERSION}/ios
-        mkdir -p ${TEMPDIR}/realm-cocoa-${VERSION}/browser
+        FOLDER=${TEMPDIR}/realm-${LANG}-${VERSION}
+
+        mkdir -p ${FOLDER}/osx ${FOLDER}/ios ${FOLDER}/watchos
+
+        if [[ "${LANG}" == "objc" ]]; then
+            mkdir -p ${FOLDER}/ios/static
+            mkdir -p ${FOLDER}/ios/dynamic
+            mkdir -p ${FOLDER}/Swift
+
+            (
+                cd ${FOLDER}/osx
+                unzip ${WORKSPACE}/realm-framework-osx.zip
+            )
+
+            (
+                cd ${FOLDER}/ios/static
+                unzip ${WORKSPACE}/realm-framework-ios.zip
+            )
+
+            (
+                cd ${FOLDER}/ios/dynamic
+                unzip ${WORKSPACE}/realm-dynamic-framework-ios.zip
+            )
+
+            (
+                cd ${FOLDER}/watchos
+                unzip ${WORKSPACE}/realm-framework-watchos.zip
+            )
+        else
+            (
+                cd ${FOLDER}/osx
+                unzip ${WORKSPACE}/realm-swift-framework-osx.zip
+            )
+
+            (
+                cd ${FOLDER}/ios
+                unzip ${WORKSPACE}/realm-swift-framework-ios.zip
+            )
+
+            (
+                cd ${FOLDER}/watchos
+                unzip ${WORKSPACE}/realm-swift-framework-watchos.zip
+            )
+        fi
 
         (
-            cd ${TEMPDIR}/realm-cocoa-${VERSION}/osx
-            unzip ${WORKSPACE}/realm-framework-osx.zip
+            cd ${WORKSPACE}/tightdb_objc
+            cp -R plugin ${FOLDER}
+            cp LICENSE ${FOLDER}/LICENSE.txt
+            if [[ "${LANG}" == "objc" ]]; then
+                cp Realm/Swift/RLMSupport.swift ${FOLDER}/Swift/
+            fi
         )
 
         (
-            cd ${TEMPDIR}/realm-cocoa-${VERSION}/ios
-            unzip ${WORKSPACE}/realm-framework-ios.zip
+            cd ${FOLDER}
+            unzip ${WORKSPACE}/realm-examples.zip
+            cd examples
+            if [[ "${LANG}" == "objc" ]]; then
+                rm -rf ios/swift-1.2 ios/swift-2.1
+            else
+                rm -rf ios/objc ios/rubymotion osx
+            fi
         )
 
-        (
-            cd ${TEMPDIR}/realm-cocoa-${VERSION}/browser
-            unzip ${WORKSPACE}/realm-browser.zip
-        )
-
-        (
-            cd ${TEMPDIR}/realm-cocoa-${VERSION}
-            unzip ${WORKSPACE}/realm-obj-examples.zip
-        )
-
-        cp -R ${WORKSPACE}/tightdb_objc/plugin ${TEMPDIR}/realm-cocoa-${VERSION}
-        cp ${WORKSPACE}/tightdb_objc/LICENSE ${TEMPDIR}/realm-cocoa-${VERSION}/LICENSE.txt
-        mkdir -p ${TEMPDIR}/realm-cocoa-${VERSION}/Swift
-        cp ${WORKSPACE}/tightdb_objc/Realm/Swift/RLMSupport.swift ${TEMPDIR}/realm-cocoa-${VERSION}/Swift/
-
-        cat > ${TEMPDIR}/realm-cocoa-${VERSION}/docs.webloc <<EOF
+        cat > ${FOLDER}/docs.webloc <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>URL</key>
-    <string>http://realm.io/docs/ios/latest</string>
+    <string>https://realm.io/docs/${LANG}/${VERSION}</string>
 </dict>
 </plist>
 EOF
 
         (
           cd ${TEMPDIR}
-          zip --symlinks -r realm-cocoa-${VERSION}.zip realm-cocoa-${VERSION}
-          mv realm-cocoa-${VERSION}.zip ${WORKSPACE}
+          zip --symlinks -r realm-${LANG}-${VERSION}.zip realm-${LANG}-${VERSION}
+          mv realm-${LANG}-${VERSION}.zip ${WORKSPACE}
         )
         ;;
 
@@ -519,53 +1011,89 @@ EOF
             exit 1
         fi
 
-        REALM_SOURCE=$(pwd)
-        mkdir $WORKSPACE
+        REALM_SOURCE="$(pwd)"
+        mkdir -p "$WORKSPACE"
+        WORKSPACE="$(cd "$WORKSPACE" && pwd)"
+        export WORKSPACE
         cd $WORKSPACE
         git clone $REALM_SOURCE tightdb_objc
 
-        echo 'Packaging iOS'
-        sh tightdb_objc/build.sh package-ios
-        cp tightdb_objc/build/ios/realm-framework-ios.zip .
+        echo 'Packaging iOS static'
+        sh tightdb_objc/build.sh package-ios-static
+        cp tightdb_objc/build/ios-static/realm-framework-ios.zip .
+
+        echo 'Packaging iOS dynamic'
+        sh tightdb_objc/build.sh package-ios-dynamic
+        cp tightdb_objc/build/ios/realm-dynamic-framework-ios.zip .
 
         echo 'Packaging OS X'
         sh tightdb_objc/build.sh package-osx
         cp tightdb_objc/build/DerivedData/Realm/Build/Products/Release/realm-framework-osx.zip .
 
-        echo 'Packaging docs'
-        sh tightdb_objc/build.sh package-docs
-        cp tightdb_objc/docs/output/*/realm-docs.tgz .
-
         echo 'Packaging examples'
-        cd tightdb_objc/examples
-        git clean -xfd
-        cd ../..
-
+        (
+            cd tightdb_objc/examples
+            git clean -xfd
+        )
         sh tightdb_objc/build.sh package-examples
-        cp tightdb_objc/realm-obj-examples.zip .
+        cp tightdb_objc/realm-examples.zip .
+
+        echo 'Packaging iOS Swift'
+        sh tightdb_objc/build.sh package-ios-swift
+        cp tightdb_objc/build/ios/realm-swift-framework-ios.zip .
+
+        echo 'Packaging OS X Swift'
+        sh tightdb_objc/build.sh package-osx-swift
+        cp tightdb_objc/build/osx/realm-swift-framework-osx.zip .
+
+        echo 'Packaging watchOS'
+        sh tightdb_objc/build.sh package-watchos
+        sh tightdb_objc/build.sh package-watchos-swift
+        cp tightdb_objc/build/watchos/realm-swift-framework-watchos.zip .
+        cp tightdb_objc/build/watchos/realm-framework-watchos.zip .
+
+        echo 'Building final release packages'
+        sh tightdb_objc/build.sh package-release objc
+        sh tightdb_objc/build.sh package-release swift
 
         echo 'Testing packaged examples'
-        (
-            mkdir -p examples-test
-            cd examples-test
-            cp ../realm-framework-ios.zip .
-            cp ../realm-framework-osx.zip .
-            cp ../realm-obj-examples.zip .
-            ln -s $WORKSPACE/tightdb_objc .
-
-            sh ../tightdb_objc/build.sh package-test-examples
-        )
-
-        echo 'Packaging browser'
-        sh tightdb_objc/build.sh package-browser
-        cp tightdb_objc/build/DerivedData/RealmBrowser/Build/Products/Release/realm-browser.zip .
-
-        echo 'Building final release package'
-        sh tightdb_objc/build.sh package-release
+        sh tightdb_objc/build.sh package-test-examples
 
         ;;
 
+    "github-release")
+        if [ -z "${GITHUB_ACCESS_TOKEN}" ]; then
+            echo 'GITHUB_ACCESS_TOKEN must be set to create GitHub releases'
+            exit 1
+        fi
+        ./scripts/github_release.rb
+        ;;
+
+    "add-empty-changelog")
+        empty_section=$(cat <<EOS
+x.x.x Release notes (yyyy-MM-dd)
+=============================================================
+
+### API breaking changes
+
+* None.
+
+### Enhancements
+
+* None.
+
+### Bugfixes
+
+* None.
+EOS)
+        changelog=$(cat CHANGELOG.md)
+        echo "$empty_section" > CHANGELOG.md
+        echo >> CHANGELOG.md
+        echo "$changelog" >> CHANGELOG.md
+        ;;
+
     *)
+        echo "Unknown command '$COMMAND'"
         usage
         exit 1
         ;;

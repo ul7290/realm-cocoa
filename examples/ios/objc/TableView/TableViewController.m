@@ -34,7 +34,7 @@ static NSString * const kTableName = @"table";
 
 @interface TableViewController ()
 
-@property (nonatomic, strong) RLMArray *array;
+@property (nonatomic, strong) RLMResults *array;
 @property (nonatomic, strong) RLMNotificationToken *notification;
 
 @end
@@ -46,14 +46,15 @@ static NSString * const kTableName = @"table";
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    self.array = [[DemoObject allObjects] sortedResultsUsingProperty:@"date" ascending:YES];
     [self setupUI];
 
     // Set realm notification block
     __weak typeof(self) weakSelf = self;
     self.notification = [RLMRealm.defaultRealm addNotificationBlock:^(NSString *note, RLMRealm *realm) {
-        [weakSelf reloadData];
+        [weakSelf.tableView reloadData];
     }];
-    [self reloadData];
+    [self.tableView reloadData];
 }
 
 #pragma mark - UI
@@ -108,12 +109,6 @@ static NSString * const kTableName = @"table";
 
 #pragma mark - Actions
 
-- (void)reloadData
-{
-    self.array = [[DemoObject allObjects] arraySortedByProperty:@"date" ascending:YES];
-    [self.tableView reloadData];
-}
-
 - (void)backgroundAdd
 {
     dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
@@ -124,7 +119,7 @@ static NSString * const kTableName = @"table";
         [realm beginWriteTransaction];
         for (NSInteger index = 0; index < 5; index++) {
             // Add row via dictionary. Order is ignored.
-            [DemoObject createInRealm:realm withObject:@{@"title": [self randomString],
+            [DemoObject createInRealm:realm withValue:@{@"title": [self randomString],
                                                          @"date": [self randomDate]}];
         }
         [realm commitWriteTransaction];
@@ -135,7 +130,7 @@ static NSString * const kTableName = @"table";
 {
     RLMRealm *realm = RLMRealm.defaultRealm;
     [realm beginWriteTransaction];
-    [DemoObject createInRealm:realm withObject:@[[self randomString], [self randomDate]]];
+    [DemoObject createInRealm:realm withValue:@[[self randomString], [self randomDate]]];
     [realm commitWriteTransaction];
 }
 

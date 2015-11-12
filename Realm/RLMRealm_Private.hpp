@@ -16,46 +16,23 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import "RLMRealm_Dynamic.h"
-#import "RLMSchema_Private.h"
-#import "RLMAccessor.h"
+#import "RLMRealm_Private.h"
+#import "RLMUtil.hpp"
+#import "shared_realm.hpp"
 
-#import <tightdb/link_view.hpp>
-#import <tightdb/group.hpp>
+#import <realm/group.hpp>
 
-// RLMRealm private members
+namespace realm {
+    class Group;
+    class Realm;
+    typedef std::shared_ptr<realm::Realm> SharedRealm;
+}
+
 @interface RLMRealm () {
     @public
-    // expose ivar to to avoid objc messages in accessors
-    BOOL _inWriteTransaction;
-    mach_port_t _threadID;
+    realm::SharedRealm _realm;
 }
-@property (nonatomic, readonly) BOOL inWriteTransaction;
-@property (nonatomic, readonly) tightdb::Group *group;
-@property (nonatomic, readwrite) RLMSchema *schema;
 
-- (instancetype)initWithPath:(NSString *)path readOnly:(BOOL)readonly error:(NSError **)error;
+// FIXME - group should not be exposed
+@property (nonatomic, readonly) realm::Group *group;
 @end
-
-// throw an exception if the realm is being used from the wrong thread
-inline void RLMCheckThread(RLMRealm *realm) {
-    if (realm->_threadID != pthread_mach_thread_np(pthread_self())) {
-        @throw [NSException exceptionWithName:@"RLMException"
-                                       reason:@"Realm accessed from incorrect thread"
-                                     userInfo:nil];
-    }
-}
-
-// get the table used to store object of objectClass
-static inline tightdb::TableRef RLMTableForObjectClass(RLMRealm *realm,
-                                                       NSString *className,
-                                                       bool &created) {
-    NSString *tableName = RLMTableNameForClass(className);
-    return realm.group->get_or_add_table(tableName.UTF8String, &created);
-}
-static inline tightdb::TableRef RLMTableForObjectClass(RLMRealm *realm,
-                                                       NSString *className) {
-    NSString *tableName = RLMTableNameForClass(className);
-    return realm.group->get_table(tableName.UTF8String);
-}
-

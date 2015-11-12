@@ -18,99 +18,207 @@
 
 #import "RLMTestCase.h"
 
-@interface RLMRealm ()
-+ (instancetype)realmWithPath:(NSString *)path
-                     readOnly:(BOOL)readonly
-                      dynamic:(BOOL)dynamic
-                       schema:(RLMSchema *)customSchema
-                        error:(NSError **)outError;
-+ (void)clearRealmCache;
-@end
+#import "RLMRealmConfiguration_Private.h"
+#import <Realm/RLMRealm_Private.h>
+#import <Realm/RLMSchema_Private.h>
+#import <Realm/RLMRealmConfiguration_Private.h>
 
-NSString *RLMRealmPathForFile(NSString *fileName) {
-#if TARGET_OS_IPHONE
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    return [documentsDirectory stringByAppendingPathComponent:fileName];
-#else
-    return fileName;
-#endif
+static NSString *parentProcessBundleIdentifier()
+{
+    static BOOL hasInitializedIdentifier;
+    static NSString *identifier;
+    if (!hasInitializedIdentifier) {
+        identifier = [NSProcessInfo processInfo].environment[@"RLMParentProcessBundleID"];
+        hasInitializedIdentifier = YES;
+    }
+
+    return identifier;
 }
 
 NSString *RLMDefaultRealmPath() {
-#if TARGET_OS_IPHONE
-    NSString *path = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-#else
-    NSString *path = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES)[0];
-    path = [path stringByAppendingPathComponent:[[[NSBundle mainBundle] executablePath] lastPathComponent]];
-#endif
-    return [path stringByAppendingPathComponent:@"default.realm"];
+    return RLMRealmPathForFileAndBundleIdentifier(@"default.realm", parentProcessBundleIdentifier());
 }
 
 NSString *RLMTestRealmPath() {
-    return RLMRealmPathForFile(@"test.realm");
+    return RLMRealmPathForFileAndBundleIdentifier(@"test.realm", parentProcessBundleIdentifier());
 }
 
-static NSString *RLMLockPath(NSString *path) {
-    return [path stringByAppendingString:@".lock"];
-}
-
-static void RLMDeleteRealmFilesAtPath(NSString *path) {
-    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        @throw [NSException exceptionWithName:@"RLMTestException" reason:@"Unable to delete realm" userInfo:nil];
-    }
-    
-    [[NSFileManager defaultManager] removeItemAtPath:RLMLockPath(path) error:nil];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:RLMLockPath(path)]) {
-        @throw [NSException exceptionWithName:@"RLMTestException" reason:@"Unable to delete realm" userInfo:nil];
+static void deleteOrThrow(NSString *path) {
+    NSError *error;
+    if (![[NSFileManager defaultManager] removeItemAtPath:path error:&error]) {
+        if (error.code != NSFileNoSuchFileError) {
+            @throw [NSException exceptionWithName:@"RLMTestException"
+                                           reason:[@"Unable to delete realm: " stringByAppendingString:error.description]
+                                         userInfo:nil];
+        }
     }
 }
 
+NSData *RLMGenerateKey() {
+    uint8_t buffer[64];
+    SecRandomCopyBytes(kSecRandomDefault, 64, buffer);
+    return [[NSData alloc] initWithBytes:buffer length:sizeof(buffer)];
+}
 
-@implementation RLMTestCase
+static BOOL encryptTests() {
+    static BOOL encryptAll = NO;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        if (getenv("REALM_ENCRYPT_ALL")) {
+            encryptAll = YES;
+        }
+    });
+    return encryptAll;
+}
 
-+ (void)setUp
-{
+@implementation RLMTestCase {
+    dispatch_queue_t _bgQueue;
+}
+
++ (void)setUp {
     [super setUp];
-    
-    // Delete Realm files
-    RLMDeleteRealmFilesAtPath(RLMDefaultRealmPath());
-    RLMDeleteRealmFilesAtPath(RLMTestRealmPath());
+#if DEBUG || !TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+    // Disable actually syncing anything to the disk to greatly speed up the
+    // tests, but only when not running on device because it can't be
+    // re-enabled and we need it enabled for performance tests
+    RLMDisableSyncToDisk();
+#endif
+    [self preintializeSchema];
+
+    if (!getenv("RLMProcessIsChild")) {
+        // Clean up any potentially lingering Realm files from previous runs
+        [NSFileManager.defaultManager removeItemAtPath:RLMRealmPathForFile(@"") error:nil];
+    }
+
+    // Ensure the documents directory exists as it sometimes doesn't after
+    // resetting the simulator
+    [NSFileManager.defaultManager createDirectoryAtPath:RLMDefaultRealmPath().stringByDeletingLastPathComponent
+                            withIntermediateDirectories:YES attributes:nil error:nil];
 }
 
-+ (void)tearDown
-{
-    [super tearDown];
+- (void)setUp {
+    @autoreleasepool {
+        [super setUp];
+        [self deleteFiles];
 
+        if (encryptTests()) {
+            RLMRealmConfiguration *configuration = [RLMRealmConfiguration defaultConfiguration];
+            configuration.encryptionKey = RLMGenerateKey();
+        }
+    }
+}
+
+- (void)tearDown {
+    @autoreleasepool {
+        [super tearDown];
+        if (_bgQueue) {
+            dispatch_sync(_bgQueue, ^{});
+            _bgQueue = nil;
+        }
+        [self deleteFiles];
+    }
+}
+
+// This ensures the shared schema is initialized outside of of a test case,
+// so if an exception is thrown, it will kill the test process rather than
+// allowing hundreds of test cases to fail in strange ways
+// This is overridden by RLMMultiProcessTestCase to support testing the schema init
++ (void)preintializeSchema {
+    [RLMSchema sharedSchema];
+}
+
+- (void)deleteFiles {
     // Clear cache
-    [RLMRealm clearRealmCache];
-    
+    [self resetRealmState];
+
     // Delete Realm files
-    RLMDeleteRealmFilesAtPath(RLMDefaultRealmPath());
-    RLMDeleteRealmFilesAtPath(RLMTestRealmPath());
+    [self deleteRealmFileAtPath:RLMDefaultRealmPath()];
+    [self deleteRealmFileAtPath:RLMTestRealmPath()];
 }
 
-- (void)invokeTest
+- (void)resetRealmState {
+    [RLMRealm resetRealmState];
+}
+
+- (void)deleteRealmFileAtPath:(NSString *)path
 {
-    [RLMTestCase setUp];
+    deleteOrThrow(path);
+    deleteOrThrow([path stringByAppendingString:@".lock"]);
+    deleteOrThrow([path stringByAppendingString:@".note"]);
+}
+
+- (void)invokeTest {
     @autoreleasepool {
         [super invokeTest];
     }
-    [RLMTestCase tearDown];
 }
 
 - (RLMRealm *)realmWithTestPath
 {
-    return [RLMRealm realmWithPath:RLMTestRealmPath() readOnly:NO error:nil];
+    return [RLMRealm realmWithPath:RLMTestRealmPath()];
 }
 
 - (RLMRealm *)realmWithTestPathAndSchema:(RLMSchema *)schema {
-    return [RLMRealm realmWithPath:RLMTestRealmPath() readOnly:NO dynamic:NO schema:schema error:nil];
+    return [RLMRealm realmWithPath:RLMTestRealmPath() key:nil readOnly:NO inMemory:NO dynamic:YES schema:schema error:nil];
 }
 
-- (RLMRealm *)dynamicRealmWithTestPathAndSchema:(RLMSchema *)schema {
-    return [RLMRealm realmWithPath:RLMTestRealmPath() readOnly:NO dynamic:YES schema:schema error:nil];
+- (RLMRealm *)inMemoryRealmWithIdentifier:(NSString *)identifier {
+    RLMRealmConfiguration *configuration = [RLMRealmConfiguration defaultConfiguration];
+    configuration.inMemoryIdentifier = identifier;
+    return [RLMRealm realmWithConfiguration:configuration error:nil];
+}
+
+- (RLMRealm *)readOnlyRealmWithPath:(NSString *)path error:(NSError **)error {
+    RLMRealmConfiguration *configuration = [RLMRealmConfiguration defaultConfiguration];
+    configuration.path = path;
+    configuration.readOnly = true;
+    return [RLMRealm realmWithConfiguration:configuration error:error];
+}
+
+- (void)waitForNotification:(NSString *)expectedNote realm:(RLMRealm *)realm block:(dispatch_block_t)block {
+    XCTestExpectation *notificationFired = [self expectationWithDescription:@"notification fired"];
+    RLMNotificationToken *token = [realm addNotificationBlock:^(NSString *note, RLMRealm *realm) {
+        XCTAssertNotNil(note, @"Note should not be nil");
+        XCTAssertNotNil(realm, @"Realm should not be nil");
+        if (note == expectedNote) { // Check pointer equality to ensure we're using the interned string constant
+            [notificationFired fulfill];
+        }
+    }];
+
+    dispatch_queue_t queue = dispatch_queue_create("background", 0);
+    dispatch_async(queue, ^{
+        @autoreleasepool {
+            block();
+        }
+    });
+
+    [self waitForExpectationsWithTimeout:2.0 handler:nil];
+
+    // wait for queue to finish
+    dispatch_sync(queue, ^{});
+
+    [realm removeNotification:token];
+}
+
+- (void)dispatchAsync:(dispatch_block_t)block {
+    if (!_bgQueue) {
+        _bgQueue = dispatch_queue_create("test background queue", 0);
+    }
+    dispatch_async(_bgQueue, ^{
+        @autoreleasepool {
+            block();
+        }
+    });
+}
+
+- (void)dispatchAsyncAndWait:(dispatch_block_t)block {
+    [self dispatchAsync:block];
+    dispatch_sync(_bgQueue, ^{});
+}
+
+- (id)nonLiteralNil
+{
+    return nil;
 }
 
 @end

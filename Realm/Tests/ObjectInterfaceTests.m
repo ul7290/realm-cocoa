@@ -20,6 +20,18 @@
 
 #pragma mark - Test Objects
 
+@interface PrimaryKeyWithLinkObject : RLMObject
+@property NSString *primaryKey;
+@property StringObject *string;
+@end
+
+@implementation PrimaryKeyWithLinkObject
++ (NSString *)primaryKey
+{
+    return @"primaryKey";
+}
+@end
+
 #pragma mark - Tests
 
 @interface ObjectInterfaceTests : RLMTestCase
@@ -32,7 +44,7 @@
     RLMRealm *realm = [RLMRealm defaultRealm];
     
     [realm beginWriteTransaction];
-    CustomAccessorsObject *ca = [CustomAccessorsObject createInRealm:realm withObject:@[@"name", @2]];
+    CustomAccessorsObject *ca = [CustomAccessorsObject createInRealm:realm withValue:@[@"name", @2]];
     XCTAssertEqualObjects([ca getThatName], @"name", @"name property should be name.");
     
     [ca setTheInt:99];
@@ -55,6 +67,32 @@
     
     CustomAccessorsObject *objectFromRealm = [CustomAccessorsObject allObjects][0];
     XCTAssertEqual((int)objectFromRealm.age, (int)99, @"age property should be 99");
+}
+
+- (void)testCustomAccessorsWithCreateOrUpdate
+{
+    RLMRealm *realm = [RLMRealm defaultRealm];
+
+    [realm beginWriteTransaction];
+    CustomAccessorsObject *caStandalone = [[CustomAccessorsObject alloc] init];
+    caStandalone.name = @"name";
+    caStandalone.age = 99;
+    [CustomAccessorsObject createInRealm:realm withValue:caStandalone];
+    [realm commitWriteTransaction];
+
+    CustomAccessorsObject *objectFromRealm = [CustomAccessorsObject allObjects][0];
+    XCTAssertEqualObjects(objectFromRealm.name, @"name", @"name property should be name.");
+    XCTAssertEqual(objectFromRealm.age, 99, @"age property should be 99");
+}
+
+- (void)testCreateOrUpdateSameRealm
+{
+    RLMRealm *realm = self.realmWithTestPath;
+    [realm beginWriteTransaction];
+    PrimaryKeyWithLinkObject *object = [PrimaryKeyWithLinkObject createInRealm:realm withValue:@[@"", @[@""]]];
+    PrimaryKeyWithLinkObject *returnedObject = [PrimaryKeyWithLinkObject createOrUpdateInRealm:realm withValue:object];
+    XCTAssertEqual(object, returnedObject);
+    [realm commitWriteTransaction];
 }
 
 - (void)testClassExtension

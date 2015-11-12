@@ -43,8 +43,8 @@
     [self makeDogWithName:@"Harvie" owner:@"Tim"];
 
     RLMRealm *realm = [self realmWithTestPath];
-    RLMArray *owners = [OwnerObject objectsInRealm:realm withPredicate:nil];
-    RLMArray *dogs = [DogObject objectsInRealm:realm withPredicate:nil];
+    RLMResults *owners = [OwnerObject objectsInRealm:realm withPredicate:nil];
+    RLMResults *dogs = [DogObject objectsInRealm:realm withPredicate:nil];
     XCTAssertEqual(owners.count, 1U);
     XCTAssertEqual(dogs.count, 1U);
     XCTAssertEqualObjects([owners[0] name], @"Tim", @"Tim is named Tim");
@@ -66,8 +66,8 @@
     [realm addObject:owner];
     [realm commitWriteTransaction];
 
-    RLMArray *owners = [OwnerObject objectsInRealm:realm withPredicate:nil];
-    RLMArray *dogs = [DogObject objectsInRealm:realm withPredicate:nil];
+    RLMResults *owners = [OwnerObject objectsInRealm:realm withPredicate:nil];
+    RLMResults *dogs = [DogObject objectsInRealm:realm withPredicate:nil];
     XCTAssertEqual(owners.count, 1U);
     XCTAssertEqual(dogs.count, 0U);
     XCTAssertEqualObjects([owners[0] name], @"Tim", @"Tim is named Tim");
@@ -86,7 +86,7 @@
     XCTAssertEqual([DogObject allObjectsInRealm:realm].count, 1U);
 
     [realm beginWriteTransaction];
-    OwnerObject *fiel = [OwnerObject createInRealm:realm withObject:@[@"Fiel", [NSNull null]]];
+    OwnerObject *fiel = [OwnerObject createInRealm:realm withValue:@[@"Fiel", [NSNull null]]];
     fiel.dog = [DogObject allObjectsInRealm:realm].firstObject;
     [realm commitWriteTransaction];
 
@@ -123,16 +123,14 @@
 {
     RLMRealm *realm = [self realmWithTestPath];
 
-    OwnerObject *owner = [[OwnerObject alloc] init];
-    owner.name = @"Tim";
-    owner.dog = [[DogObject alloc] init];
-
+    LinkToAllTypesObject *linkObject = [[LinkToAllTypesObject alloc] init];
+    linkObject.allTypesCol = [[AllTypesObject alloc] init];
     [realm beginWriteTransaction];
-    XCTAssertThrows([realm addObject:owner], @"dogName not set on linked object");
+    XCTAssertThrows([realm addObject:linkObject], @"dateCol not set on linked object");
 
-    StringObject *to = [StringObject createInRealm:realm withObject:@[@"testObject"]];
+    StringObject *to = [StringObject createInRealm:realm withValue:@[@"testObject"]];
     NSArray *args = @[@"Tim", to];
-    XCTAssertThrows([OwnerObject createInRealm:realm withObject:args], @"Inserting wrong object type should throw");
+    XCTAssertThrows([OwnerObject createInRealm:realm withValue:args], @"Inserting wrong object type should throw");
     [realm commitWriteTransaction];
 }
 
@@ -150,13 +148,48 @@
     [realm commitWriteTransaction];
 
     XCTAssertThrows([OwnerObject objectsInRealm:realm where:@"dog.dogName.first = 'Fifo'"], @"3 levels of relationship");
-
 }
 
-// FIXME - disabled until we fix commit log issue which break transacions when leaking realm objects
-/*
-- (void)testCircularLinks
- {
+- (void)testBidirectionalRelationship {
+    RLMRealm *realm = [RLMRealm defaultRealm];
+
+    CircleObject *obj0 = [[CircleObject alloc] initWithValue:@[@"a", NSNull.null]];
+    CircleObject *obj1 = [[CircleObject alloc] initWithValue:@[@"b", obj0]];
+    obj0.next = obj1;
+
+    [realm beginWriteTransaction];
+    [realm addObject:obj0];
+    [realm addObject:obj1];
+    [realm commitWriteTransaction];
+
+    RLMResults *results = [CircleObject allObjects];
+    XCTAssertEqualObjects(@"a", [results[0] data]);
+    XCTAssertEqualObjects(@"b", [results[1] data]);
+}
+
+- (void)testAddingCircularReferenceDoesNotLeakSourceObjects {
+    CircleObject __weak *weakObj0, __weak *weakObj1;
+    @autoreleasepool {
+        CircleObject *obj0 = [[CircleObject alloc] initWithValue:@[@"a", NSNull.null]];
+        CircleObject *obj1 = [[CircleObject alloc] initWithValue:@[@"b", obj0]];
+        obj0.next = obj1;
+
+        weakObj0 = obj0;
+        weakObj1 = obj1;
+
+        RLMRealm *realm = [RLMRealm defaultRealm];
+        [realm beginWriteTransaction];
+        [realm addObject:obj0];
+        obj0.next = nil;
+        obj1.next = nil;
+        [realm commitWriteTransaction];
+    }
+
+    XCTAssertNil(weakObj0);
+    XCTAssertNil(weakObj1);
+}
+
+- (void)testCircularLinks {
     RLMRealm *realm = [self realmWithTestPath];
 
     CircleObject *obj = [[CircleObject alloc] init];
@@ -168,10 +201,10 @@
     obj.next.data = @"b";
     [realm commitWriteTransaction];
 
-    CircleObject *obj1 = [realm allObjects:CircleObject.className].firstObject;
+    CircleObject *obj1 = [CircleObject allObjectsInRealm:realm].firstObject;
     XCTAssertEqualObjects(obj1.data, @"b", @"data should be 'b'");
     XCTAssertEqualObjects(obj1.data, obj.next.data, @"objects should be equal");
-}*/
+ }
 
 @end
 

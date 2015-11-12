@@ -28,10 +28,27 @@
     self.window.rootViewController = [[UIViewController alloc] init];
     [self.window makeKeyAndVisible];
 
+    // copy over old data files for migration
+    NSString *defaultRealmPath = [RLMRealmConfiguration defaultConfiguration].path;
+    NSString *defaultRealmParentPath = [defaultRealmPath stringByDeletingLastPathComponent];
+    NSString *v0Path = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"default-v0.realm"];
+    [[NSFileManager defaultManager] removeItemAtPath:defaultRealmPath error:nil];
+    [[NSFileManager defaultManager] copyItemAtPath:v0Path toPath:defaultRealmPath error:nil];
+
+
+    // trying to open an outdated realm file without first registering a new schema version and migration block
+    // with throw
+    @try {
+        [RLMRealm defaultRealm];
+    }
+    @catch (NSException *exception) {
+        NSLog(@"Trying to open an outdated realm a migration block threw an exception.");
+    }
+
     // define a migration block
     // you can define this inline, but we will reuse this to migrate realm files from multiple versions
     // to the most current version of our data model
-    RLMMigrationBlock migrationBlock = ^NSUInteger(RLMMigration *migration, NSUInteger oldSchemaVersion) {
+    RLMMigrationBlock migrationBlock = ^(RLMMigration *migration, uint64_t oldSchemaVersion) {
         if (oldSchemaVersion < 1) {
             [migration enumerateObjects:Person.className block:^(RLMObject *oldObject, RLMObject *newObject) {
                 if (oldSchemaVersion < 1) {
@@ -44,7 +61,7 @@
             [migration enumerateObjects:Person.className block:^(RLMObject *oldObject, RLMObject *newObject) {
                 // give JP a dog
                 if ([newObject[@"fullName"] isEqualToString:@"JP McDonald"]) {
-                    Pet *jpsDog = [[Pet alloc] initWithObject:@[@"Jimbo", @(AnimalTypeDog)]];
+                    Pet *jpsDog = [[Pet alloc] initWithValue:@[@"Jimbo", @(AnimalTypeDog)]];
                     [newObject[@"pets"] addObject:jpsDog];
                 }
             }];
@@ -57,38 +74,26 @@
                 }
             }];
         }
-
-        // return the new schema version
-        return 3;
+        NSLog(@"Migration complete.");
     };
 
-    //
-    // Migrate the default realm over multiple data model versions
-    //
-    NSString *defaultRealmPath = [RLMRealm defaultRealmPath];
-    NSString *defaultRealmParentPath = [defaultRealmPath stringByDeletingLastPathComponent];
+    RLMRealmConfiguration *configuration = [RLMRealmConfiguration defaultConfiguration];
 
-    // copy over old data file for v0 data model
-    NSString *v0Path = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"default-v0.realm"];
-    [[NSFileManager defaultManager] removeItemAtPath:defaultRealmPath error:nil];
-    [[NSFileManager defaultManager] copyItemAtPath:v0Path toPath:defaultRealmPath error:nil];
+    // set the schema verion and migration block for the defualt realm
+    configuration.schemaVersion = 3;
+    configuration.migrationBlock = migrationBlock;
 
-    // opening an outdated realm file without a migration with throw
-    @try {
-        [RLMRealm realmWithPath:v0Path];
-    }
-    @catch (NSException *exception) {
-        NSLog(@"Trying to open an outdated realm without migrating threw an exception.");
-    }
+    [RLMRealmConfiguration setDefaultConfiguration:configuration];
 
-    // migrate default realm at v0 data model to the current version
-    [RLMRealm migrateDefaultRealmWithBlock:migrationBlock];
+    // now that we have set a schema version and migration block for the configuration,
+    // performing the migration and opening the Realm will succeed
+    [RLMRealm defaultRealm];
 
     // print out all migrated objects in the default realm
     NSLog(@"Migrated objects in the default Realm: %@", [[Person allObjects] description]);
 
     //
-    // Migrate a realms at a custom paths
+    // Migrate other Realm versions
     //
     NSString *v1Path = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"default-v1.realm"];
     NSString *v2Path = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"default-v2.realm"];
@@ -99,14 +104,20 @@
     [[NSFileManager defaultManager] removeItemAtPath:realmv2Path error:nil];
     [[NSFileManager defaultManager] copyItemAtPath:v2Path toPath:realmv2Path error:nil];
 
-    // migrate realms at custom paths
-    [RLMRealm migrateRealmAtPath:realmv1Path withBlock:migrationBlock];
-    [RLMRealm migrateRealmAtPath:realmv2Path withBlock:migrationBlock];
+    // set schemave versions and migration blocks form Realms at each path
+    RLMRealmConfiguration *realmv1Configuration = [configuration copy];
+    realmv1Configuration.path = realmv1Path;
+
+    RLMRealmConfiguration *realmv2Configuration = [configuration copy];
+    realmv2Configuration.path = realmv2Path;
+
+    // manully migration v1Path, v2Path is migrated implicitly on access
+    [RLMRealm migrateRealm:realmv1Configuration];
 
     // print out all migrated objects in the migrated realms
-    RLMRealm *realmv1 = [RLMRealm realmWithPath:realmv1Path];
+    RLMRealm *realmv1 = [RLMRealm realmWithConfiguration:realmv1Configuration error:nil];
     NSLog(@"Migrated objects in the Realm migrated from v1: %@", [[Person allObjectsInRealm:realmv1] description]);
-    RLMRealm *realmv2 = [RLMRealm realmWithPath:realmv2Path];
+    RLMRealm *realmv2 = [RLMRealm realmWithConfiguration:realmv2Configuration error:nil];
     NSLog(@"Migrated objects in the Realm migrated from v2: %@", [[Person allObjectsInRealm:realmv2] description]);
 
     return YES;

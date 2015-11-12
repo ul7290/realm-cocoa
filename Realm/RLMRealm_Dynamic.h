@@ -16,89 +16,115 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import "RLMRealm.h"
-#import "RLMObjectSchema.h"
+#import <Realm/RLMRealm.h>
+
+#import <Realm/RLMObjectSchema.h>
+#import <Realm/RLMProperty.h>
+
+@class RLMResults;
 
 @interface RLMRealm (Dynamic)
 
-// full constructor
-+ (instancetype)realmWithPath:(NSString *)path
-                     readOnly:(BOOL)readonly
-                      dynamic:(BOOL)dynamic
-                       schema:(RLMSchema *)customSchema
-                        error:(NSError **)outError;
+#pragma mark - Getting Objects from a Realm
 
-/**---------------------------------------------------------------------------------------
- *  @name Getting Objects from a Realm
- * ---------------------------------------------------------------------------------------
- */
 /**
+ This method is useful only in specialized circumstances, for example, when building components
+ that integrate with Realm. If you are simply building an app on Realm, it is
+ recommended to use the class methods on `RLMObject`.
+ 
  Get all objects of a given type in this Realm.
+ 
+ The preferred way to get objects of a single class is to use the class methods on RLMObject.
+ 
+ @warning This method is useful only in specialized circumstances.
 
  @param className   The name of the RLMObject subclass to retrieve on e.g. `MyClass.className`.
 
- @return    An RLMArray of all objects in this realm of the given type.
+ @return    An RLMResults of all objects in this realm of the given type.
 
  @see       RLMObject allObjects
  */
-- (RLMArray *)allObjects:(NSString *)className;
+- (RLMResults *)allObjects:(NSString *)className;
 
 /**
+ This method is useful only in specialized circumstances, for example, when building components
+ that integrate with Realm. If you are simply building an app on Realm, it is
+ recommended to use the class methods on `RLMObject`.
+ 
  Get objects matching the given predicate from the this Realm.
 
  The preferred way to get objects of a single class is to use the class methods on RLMObject.
+ 
+ @warning This method is useful only in specialized circumstances.
 
  @param className       The type of objects you are looking for (name of the class).
  @param predicateFormat The predicate format string which can accept variable arguments.
 
- @return    An RLMArray of results matching the given predicate.
+ @return    An RLMResults of results matching the given predicate.
 
  @see       RLMObject objectsWhere:
  */
-- (RLMArray *)objects:(NSString *)className where:(NSString *)predicateFormat, ...;
+- (RLMResults *)objects:(NSString *)className where:(NSString *)predicateFormat, ...;
 
 /**
+ This method is useful only in specialized circumstances, for example, when building components
+ that integrate with Realm. If you are simply building an app on Realm, it is
+ recommended to use the class methods on `RLMObject`.
+ 
  Get objects matching the given predicate from the this Realm.
 
  The preferred way to get objects of a single class is to use the class methods on RLMObject.
+ 
+ @warning This method is useful only in specialized circumstances.
 
  @param className   The type of objects you are looking for (name of the class).
  @param predicate   The predicate to filter the objects.
 
- @return    An RLMArray of results matching the given predicate.
+ @return    An RLMResults of results matching the given predicate.
 
  @see       RLMObject objectsWhere:
  */
-- (RLMArray *)objects:(NSString *)className withPredicate:(NSPredicate *)predicate;
+- (RLMResults *)objects:(NSString *)className withPredicate:(NSPredicate *)predicate;
 
-@end
-
-@interface RLMObjectSchema (Dynamic)
 /**
- Initialize an RLMObjectSchema with classname, objectClass, and an array of properties
-
- @param objectClassName     The name of the class used to refer to objects of this type.
- @param objectClass         The objective-c class used when creating instances of this type.
- @param properties          An array RLMProperty describing the persisted properties for this type.
-
- @return    An initialized instance of RLMObjectSchema.
+ This method is useful only in specialized circumstances, for example, when building components
+ that integrate with Realm. If you are simply building an app on Realm, it is
+ recommended to use the class methods on `RLMObject`.
+ 
+ Get an object of a given class name with a primary key
+ 
+ The preferred way to get an object of a single class is to use the class methods on RLMObject.
+ 
+ @warning This method is useful only in specialized circumstances.
+ 
+ @param className   The class name for the object you are looking for
+ @param primaryKey  The primary key value for the object you are looking for
+ 
+ @return    An object or nil if an object with the given primary key does not exist.
+ 
+ @see       RLMObject objectForPrimaryKey:
  */
-- (instancetype)initWithClassName:(NSString *)objectClassName objectClass:(Class)objectClass properties:(NSArray *)properties;
-@end
+- (RLMObject *)objectWithClassName:(NSString *)className forPrimaryKey:(id)primaryKey;
 
-@interface RLMProperty (Dynamic)
 /**
- Initialize an RLMProperty
+ This method is useful only in specialized circumstances, for example, when building components
+ that integrate with Realm. If you are simply building an app on Realm, it is
+ recommended to use [RLMObject createInDefaultRealmWithValue:].
+ 
+ Create an RLMObject of type `className` in the Realm with a given object.
+ 
+ @warning This method is useful only in specialized circumstances.
 
- @param name            The property name.
- @param type            The property type.
- @param objectClassName The object type used for Object and Array types.
- @param attributes      A bitmask of attributes for this property.
+ @param value   The value used to populate the object. This can be any key/value coding compliant
+                object, or a JSON object such as those returned from the methods in NSJSONSerialization, or
+                an NSArray with one object for each persisted property. An exception will be
+                thrown if any required properties are not present and no default is set.
 
- @return    An initialized instance of RLMProperty.
+                When passing in an NSArray, all properties must be present, valid and in the same order as 
+                the properties defined in the model.
+ 
+ @return    An RLMObject of type `className`
  */
-- (instancetype)initWithName:(NSString *)name
-                        type:(RLMPropertyType)type
-             objectClassName:(NSString *)objectClassName
-                  attributes:(RLMPropertyAttributes)attributes;
+-(RLMObject *)createObject:(NSString *)className withValue:(id)value;
+
 @end

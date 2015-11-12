@@ -47,7 +47,7 @@ RLM_ARRAY_TYPE(Dog)
     self.window.rootViewController = [[UIViewController alloc] init];
     [self.window makeKeyAndVisible];
 
-    [[NSFileManager defaultManager] removeItemAtPath:[RLMRealm defaultRealmPath] error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:[RLMRealmConfiguration defaultConfiguration].path error:nil];
 
     // Create a standalone object
     Dog *mydog = [[Dog alloc] init];
@@ -66,10 +66,10 @@ RLM_ARRAY_TYPE(Dog)
     [realm commitWriteTransaction];
 
     // Query
-    RLMArray *results = [Dog objectsInRealm:realm where:@"name contains 'x'"];
+    RLMResults *results = [Dog objectsInRealm:realm where:@"name contains 'x'"];
 
     // Queries are chainable!
-    RLMArray *results2 = [results objectsWhere:@"age > 8"];
+    RLMResults *results2 = [results objectsWhere:@"age > 8"];
     NSLog(@"Number of dogs: %li", (unsigned long)results2.count);
 
     // Link objects
@@ -84,7 +84,7 @@ RLM_ARRAY_TYPE(Dog)
     // Multi-threading
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         RLMRealm *otherRealm = [RLMRealm defaultRealm];
-        RLMArray *otherResults = [Dog objectsInRealm:otherRealm where:@"name contains 'Rex'"];
+        RLMResults *otherResults = [Dog objectsInRealm:otherRealm where:@"name contains 'Rex'"];
         NSLog(@"Number of dogs: %li", (unsigned long)otherResults.count);
     });
 

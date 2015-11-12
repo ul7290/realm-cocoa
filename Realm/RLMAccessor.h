@@ -17,39 +17,39 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import <Foundation/Foundation.h>
-#import "RLMRealm.h"
+
+#import <Realm/RLMDefines.h>
+
+@class RLMObjectSchema, RLMProperty, RLMObjectBase, RLMProperty;
+
+#ifdef __cplusplus
+typedef NSUInteger RLMCreationOptions;
+#else
+typedef NS_OPTIONS(NSUInteger, RLMCreationOptions);
+#endif
+
+RLM_ASSUME_NONNULL_BEGIN
 
 //
 // Accessors Class Creation/Caching
 //
-@class RLMObjectSchema;
-@class RLMProperty;
 
 // get accessor classes for an object class - generates classes if not cached
-Class RLMAccessorClassForObjectClass(Class objectClass, RLMObjectSchema *schema);
+Class RLMAccessorClassForObjectClass(Class objectClass, RLMObjectSchema *schema, NSString *prefix);
 Class RLMStandaloneAccessorClassForObjectClass(Class objectClass, RLMObjectSchema *schema);
+
+// Check if a given class is a generated accessor class
+bool RLMIsGeneratedClass(Class cls);
 
 //
 // Dynamic getters/setters
 //
-void RLMDynamicValidatedSet(RLMObject *obj, NSString *propName, id val);
-id RLMDynamicGet(RLMObject *obj, NSString *propName);
-
-// Options for RLMDynamicSet
-typedef NS_OPTIONS(NSUInteger, RLMSetFlag) {
-    // Verify that no existing row has the same value for this property
-    RLMSetFlagEnforceUnique = 1 << 0,
-    // If the property is a link or array property, upsert the linked objects
-    // if they have a primary key, and insert them otherwise.
-    RLMSetFlagUpdateOrCreate = 1 << 1,
-    // If a link or array property links to an object persisted in a different
-    // realm from the object, copy it into the object's realm rather than throwing
-    // an error
-    RLMSetFlagAllowCopy = 1 << 2,
-};
+FOUNDATION_EXTERN void RLMDynamicValidatedSet(RLMObjectBase *obj, NSString *propName, id __nullable val);
+FOUNDATION_EXTERN RLMProperty *RLMValidatedGetProperty(RLMObjectBase *obj, NSString *propName);
+FOUNDATION_EXTERN id __nullable RLMDynamicGet(RLMObjectBase *obj, RLMProperty *prop);
 
 // by property/column
-void RLMDynamicSet(RLMObject *obj, RLMProperty *prop, id val, RLMSetFlag options);
+FOUNDATION_EXTERN void RLMDynamicSet(RLMObjectBase *obj, RLMProperty *prop, id val, RLMCreationOptions options);
 
 //
 // Class modification
@@ -59,4 +59,7 @@ void RLMDynamicSet(RLMObject *obj, RLMProperty *prop, id val, RLMSetFlag options
 void RLMReplaceClassNameMethod(Class accessorClass, NSString *className);
 
 // Replace sharedSchema method for the given class
-void RLMReplaceSharedSchemaMethod(Class accessorClass, RLMObjectSchema *schema);
+void RLMReplaceSharedSchemaMethod(Class accessorClass, RLMObjectSchema * __nullable schema);
+void RLMReplaceSharedSchemaMethodWithBlock(Class accessorClass, RLMObjectSchema *(^method)(Class));
+
+RLM_ASSUME_NONNULL_END

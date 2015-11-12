@@ -36,7 +36,12 @@ int main(int argc, const char * argv[])
         }
 
         NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
-        dateFormatter.dateFormat = @"MMMM dd, YYYY";
+        dateFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        dateFormatter.dateFormat = @"MMMM dd, yyyy";
+        dateFormatter.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
+
+        [[NSFileManager defaultManager] removeItemAtPath:[RLMRealmConfiguration defaultConfiguration].path
+                                                   error:nil];
 
         RLMRealm *realm = [RLMRealm defaultRealm];
         [realm beginWriteTransaction];

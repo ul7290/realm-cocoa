@@ -18,6 +18,10 @@ You can add rows by tapping the add button and remove rows by swiping right-to-l
 
 The application also demonstrates how to import data in a background thread.
 
+### GroupedTableView
+
+A sample app to demonstrate how to use Realm to populate a table view with sections.
+
 ### Migration
 
 This example showcases Realm's migration features.
@@ -29,6 +33,10 @@ Using data from FourSquare, this example demonstrates how to populate a Realm wi
 ### Encryption
 
 This simple app shows how to use an encrypted realm.
+
+### Backlink
+
+This simple app demonstrates how to define models with inverse relationships using `-linkingObjectsOfClass:forProperty:`.
 
 ## iOS (Swift)
 
@@ -46,6 +54,10 @@ You can add rows by tapping the add button and remove rows by swiping right-to-l
 
 The application also demonstrates how to import data in a background thread.
 
+### GroupedTableView
+
+A sample app to demonstrate how to use Realm to populate a table view with sections.
+
 ### Migration
 
 This example showcases Realm's migration features.
@@ -54,11 +66,15 @@ This example showcases Realm's migration features.
 
 This simple app shows how to use an encrypted realm.
 
+### Backlink
+
+This simple app demonstrates how to define models with inverse relationships using `linkingObjectsOfClass(_:forProperty:)`.
+
 ## iOS (RubyMotion)
 
 ***RubyMotion support is experimental. We make no claims towards stability and/or performance when using Realm in RubyMotion.***
 
-In the `ios/rubymotion` directory, you will find a Simple example demonstrating how to use Realm in a [RubyMotion](http://www.rubymotion.com) iOS app. Make sure to have run `sh build.sh ios` from the root of this repo before building and running this example. You can build and run this example by running `rake` from the `rubymotion/Simple` directory.
+In the `ios/rubymotion` directory, you will find a Simple example demonstrating how to use Realm in a [RubyMotion](http://www.rubymotion.com) iOS app. Make sure to have run `sh build.sh ios-static` from the root of this repo before building and running this example. You can build and run this example by running `rake` from the `rubymotion/Simple` directory.
 
 To use Realm in your own RubyMotion iOS or OSX app, you must define your models in Objective-C and place them in the `models/` directory. Then in your `Rakefile`, define the following `vendor_project`s:
 
@@ -76,3 +92,10 @@ In the `osx/objc/RealmExamples.xcodeproj` project, you will find the following e
 This is a small OS X command-line program which demonstrates how to import data from JSON into a Realm.
 
 Open the project in Xcode, and press "Run" to build and run the program. It will write output to the console.
+
+## Installation Examples
+
+The `installation/` directory contains example Xcode projects demonstrating how
+to install Realm Objective-C and Realm Swift from all available methods defined
+in <https://realm.io/docs/objc/latest/#installation> and
+<https://realm.io/docs/swift/latest/#installation>.

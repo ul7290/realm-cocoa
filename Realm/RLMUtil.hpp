@@ -16,36 +16,50 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import "RLMConstants.h"
-#import "RLMSchema.h"
+#import <Realm/RLMConstants.h>
+#import <Realm/RLMOptionalBase.h>
 #import <objc/runtime.h>
 
-#import <tightdb/table.hpp>
-#import <tightdb/row.hpp>
-#import <tightdb/string_data.hpp>
-#import <tightdb/util/safe_int_ops.hpp>
+#import <realm/array.hpp>
+#import <realm/binary_data.hpp>
+#import <realm/datetime.hpp>
+#import <realm/string_data.hpp>
+#import <realm/util/file.hpp>
 
+namespace realm {
+    class Mixed;
+}
+
+@class RLMObjectSchema;
 @class RLMProperty;
+@protocol RLMFastEnumerable;
+
+__attribute__((format(NSString, 1, 2)))
+NSException *RLMException(NSString *fmt, ...);
+NSException *RLMException(std::exception const& exception);
+
+NSError *RLMMakeError(RLMError code, std::exception const& exception);
+NSError *RLMMakeError(RLMError code, const realm::util::File::AccessError&);
+NSError *RLMMakeError(std::system_error const& exception);
+NSError *RLMMakeError(NSException *exception);
+
+void RLMSetErrorOrThrow(NSError *error, NSError **outError);
 
 // returns if the object can be inserted as the given type
 BOOL RLMIsObjectValidForProperty(id obj, RLMProperty *prop);
 
-// returns a validated object for an input object
-// creates new objects for child objects and array literals as necessary
-// throws if passed in literals are not compatible with prop
-id RLMValidatedObjectForProperty(id obj, RLMProperty *prop, RLMSchema *schema);
+// gets default values for the given schema (+defaultPropertyValues)
+// merges with native property defaults if Swift class
+NSDictionary *RLMDefaultValuesForObjectSchema(RLMObjectSchema *objectSchema);
 
-// throws if the values in array are not valid for the given schema
-// returns array with allocated child objects
-NSArray *RLMValidatedArrayForObjectSchema(NSArray *array, RLMObjectSchema *objectSchema, RLMSchema *schema);
+NSArray *RLMCollectionValueForKey(id<RLMFastEnumerable> collection, NSString *key);
 
-// throws if the values in dict or properties in a kvc object are not valid for the given schema
-// inserts default values for missing properties
-// returns dictionary with default values and allocates child objects when applicable
-NSDictionary *RLMValidatedDictionaryForObjectSchema(id value, RLMObjectSchema *objectSchema, RLMSchema *schema);
+void RLMCollectionSetValueForKey(id<RLMFastEnumerable> collection, NSString *key, id value);
+
+BOOL RLMIsDebuggerAttached();
 
 // C version of isKindOfClass
-static inline BOOL RLMIsKindOfclass(Class class1, Class class2) {
+static inline BOOL RLMIsKindOfClass(Class class1, Class class2) {
     while (class1) {
         if (class1 == class2) return YES;
         class1 = class_getSuperclass(class1);
@@ -53,11 +67,8 @@ static inline BOOL RLMIsKindOfclass(Class class1, Class class2) {
     return NO;
 }
 
-// Determines if class1 descends from class2
-static inline BOOL RLMIsSubclass(Class class1, Class class2) {
-    class1 = class_getSuperclass(class1);
-    return RLMIsKindOfclass(class1, class2);
-}
+// Returns whether the class is an indirect descendant of RLMObjectBase
+BOOL RLMIsObjectSubclass(Class klass);
 
 template<typename T>
 static inline T *RLMDynamicCast(__unsafe_unretained id obj) {
@@ -65,6 +76,17 @@ static inline T *RLMDynamicCast(__unsafe_unretained id obj) {
         return obj;
     }
     return nil;
+}
+
+template<typename T>
+static inline T RLMCoerceToNil(__unsafe_unretained T obj) {
+    if (static_cast<id>(obj) == NSNull.null) {
+        return nil;
+    }
+    else if (__unsafe_unretained auto optional = RLMDynamicCast<RLMOptionalBase>(obj)) {
+        return RLMCoerceToNil(optional.underlyingValue);
+    }
+    return obj;
 }
 
 // Translate an rlmtype to a string representation
@@ -95,22 +117,52 @@ static inline NSString *RLMTypeToString(RLMPropertyType type) {
 }
 
 // String conversion utilities
-static inline NSString * RLMStringDataToNSString(tightdb::StringData stringData) {
+static inline NSString * RLMStringDataToNSString(realm::StringData stringData) {
     static_assert(sizeof(NSUInteger) >= sizeof(size_t),
                   "Need runtime overflow check for size_t to NSUInteger conversion");
-    return [[NSString alloc] initWithBytes:stringData.data()
-                                    length:stringData.size()
-                                  encoding:NSUTF8StringEncoding];
+    if (stringData.is_null()) {
+        return nil;
+    }
+    else {
+        return [[NSString alloc] initWithBytes:stringData.data()
+                                        length:stringData.size()
+                                      encoding:NSUTF8StringEncoding];
+    }
 }
 
-static inline tightdb::StringData RLMStringDataWithNSString(NSString *string) {
+static inline realm::StringData RLMStringDataWithNSString(__unsafe_unretained NSString *const string) {
     static_assert(sizeof(size_t) >= sizeof(NSUInteger),
                   "Need runtime overflow check for NSUInteger to size_t conversion");
-    return tightdb::StringData(string.UTF8String,
+    return realm::StringData(string.UTF8String,
                                [string lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
 }
 
 // Binary convertion utilities
-static inline tightdb::BinaryData RLMBinaryDataForNSData(NSData *data) {
-    return tightdb::BinaryData(static_cast<const char *>(data.bytes), data.length);
+static inline NSData *RLMBinaryDataToNSData(realm::BinaryData binaryData) {
+    return binaryData ? [NSData dataWithBytes:binaryData.data() length:binaryData.size()] : nil;
 }
+
+static inline realm::BinaryData RLMBinaryDataForNSData(__unsafe_unretained NSData *const data) {
+    // this is necessary to ensure that the empty NSData isn't treated by core as the null realm::BinaryData
+    // because data.bytes == 0 when data.length == 0
+    // the casting bit ensures that we create a data with a non-null pointer
+    auto bytes = static_cast<const char *>(data.bytes) ?: static_cast<char *>((__bridge void *)data);
+    return realm::BinaryData(bytes, data.length);
+}
+
+// Date convertion utilities
+static inline NSDate *RLMDateTimeToNSDate(realm::DateTime dateTime) {
+    auto timeInterval = static_cast<NSTimeInterval>(dateTime.get_datetime());
+    return [NSDate dateWithTimeIntervalSince1970:timeInterval];
+}
+
+static inline realm::DateTime RLMDateTimeForNSDate(__unsafe_unretained NSDate *const date) {
+    auto time = static_cast<int64_t>(date.timeIntervalSince1970);
+    return realm::DateTime(time);
+}
+
+static inline NSUInteger RLMConvertNotFound(size_t index) {
+    return index == realm::not_found ? NSNotFound : index;
+}
+
+id RLMMixedToObjc(realm::Mixed const& value);

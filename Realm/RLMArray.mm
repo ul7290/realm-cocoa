@@ -17,36 +17,70 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import "RLMArray_Private.hpp"
-#import "RLMObject.h"
+
+#import "RLMObject_Private.h"
+#import "RLMObjectStore.h"
 #import "RLMObjectSchema.h"
-#import "RLMObjectStore.hpp"
 #import "RLMQueryUtil.hpp"
+#import "RLMSwiftSupport.h"
+#import "RLMUtil.hpp"
 
-@implementation RLMArray
+#import <realm/link_view.hpp>
 
-@synthesize realm = _realm;
-@synthesize objectClassName = _objectClassName;
+// See -countByEnumeratingWithState:objects:count
+@interface RLMArrayHolder : NSObject {
+@public
+    std::unique_ptr<id[]> items;
+}
+@end
+@implementation RLMArrayHolder
+@end
+
+@implementation RLMArray {
+@public
+    // array for standalone
+    NSMutableArray *_backingArray;
+}
+
+template<typename IndexSetFactory>
+static void changeArray(__unsafe_unretained RLMArray *const ar, NSKeyValueChange kind, dispatch_block_t f, IndexSetFactory&& is) {
+    if (!ar->_backingArray) {
+        ar->_backingArray = [NSMutableArray new];
+    }
+
+    if (RLMObjectBase *parent = ar->_parentObject) {
+        NSIndexSet *indexes = is();
+        [parent willChange:kind valuesAtIndexes:indexes forKey:ar->_key];
+        f();
+        [parent didChange:kind valuesAtIndexes:indexes forKey:ar->_key];
+    }
+    else {
+        f();
+    }
+}
+
+static void changeArray(__unsafe_unretained RLMArray *const ar, NSKeyValueChange kind, NSUInteger index, dispatch_block_t f) {
+    changeArray(ar, kind, f, [=] { return [NSIndexSet indexSetWithIndex:index]; });
+}
+
+static void changeArray(__unsafe_unretained RLMArray *const ar, NSKeyValueChange kind, NSRange range, dispatch_block_t f) {
+    changeArray(ar, kind, f, [=] { return [NSIndexSet indexSetWithIndexesInRange:range]; });
+}
+
+static void changeArray(__unsafe_unretained RLMArray *const ar, NSKeyValueChange kind, NSIndexSet *is, dispatch_block_t f) {
+    changeArray(ar, kind, f, [=] { return is; });
+}
 
 - (instancetype)initWithObjectClassName:(NSString *)objectClassName {
     self = [super init];
     if (self) {
         _objectClassName = objectClassName;
-        _backingArray = [[NSMutableArray alloc] init];
     }
     return self;
 }
 
-- (instancetype)initViewWithObjectClassName:(NSString *)objectClassName {
-    self = [super init];
-    if (self) {
-        _objectClassName = objectClassName;
-    }
-    return self;
-
-}
-
-- (BOOL)isReadOnly {
-    return NO;
+- (RLMRealm *)realm {
+    return nil;
 }
 
 //
@@ -68,7 +102,7 @@
     return nil;
 }
 
-- (void)addObjectsFromArray:(id)objects {
+- (void)addObjects:(id<NSFastEnumeration>)objects {
     for (id obj in objects) {
         [self addObject:obj];
     }
@@ -85,12 +119,6 @@
     }
 }
 
-- (void)removeAllObjects {
-    while (self.count) {
-        [self removeLastObject];
-    }
-}
-
 - (id)objectAtIndexedSubscript:(NSUInteger)index {
     return [self objectAtIndex:index];
 }
@@ -99,26 +127,33 @@
     [self replaceObjectAtIndex:index withObject:newValue];
 }
 
-
 //
-// Stanalone RLMArray implementation
+// Standalone RLMArray implementation
 //
 
 static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
-    if (![array->_objectClassName isEqualToString:object.objectSchema.className]) {
-        @throw [NSException exceptionWithName:@"RLMException"
-                                       reason:@"Object type does not match RLMArray"
-                                     userInfo:nil];
+    if (!object) {
+        @throw RLMException(@"Object must not be nil");
+    }
+    if (![array->_objectClassName isEqualToString:object->_objectSchema.className]) {
+        @throw RLMException(@"Object type '%@' does not match RLMArray type '%@'.", object->_objectSchema.className, array->_objectClassName);
     }
 }
 
-+ (instancetype)standaloneArrayWithObjectClassName:(NSString *)objectClassName {
-    RLMArray *ar = [[RLMArray alloc] initWithObjectClassName:objectClassName];
-    ar->_backingArray = [NSMutableArray array];
-    return ar;
+static void RLMValidateArrayBounds(__unsafe_unretained RLMArray *const ar,
+                                   NSUInteger index, bool allowOnePastEnd=false) {
+    NSUInteger max = ar->_backingArray.count + allowOnePastEnd;
+    if (index >= max) {
+        @throw RLMException(@"Index %llu is out of bounds (must be less than %llu).",
+                            (unsigned long long)index, (unsigned long long)max);
+    }
 }
 
 - (id)objectAtIndex:(NSUInteger)index {
+    RLMValidateArrayBounds(self, index);
+    if (!_backingArray) {
+        _backingArray = [NSMutableArray new];
+    }
     return [_backingArray objectAtIndex:index];
 }
 
@@ -126,29 +161,119 @@ static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
     return _backingArray.count;
 }
 
-- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(__unsafe_unretained id [])buffer count:(NSUInteger)len {
-    return [_backingArray countByEnumeratingWithState:state objects:buffer count:len];
+- (BOOL)isInvalidated {
+    return NO;
+}
+
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(__unused __unsafe_unretained id [])buffer count:(__unused NSUInteger)len {
+    if (state->state != 0) {
+        return 0;
+    }
+
+    // We need to enumerate a copy of the backing array so that it doesn't
+    // reflect changes made during enumeration. This copy has to be autoreleased
+    // (since there's nowhere for us to store a strong reference), and uses
+    // RLMArrayHolder rather than an NSArray because NSArray doesn't guarantee
+    // that it'll use a single contiguous block of memory, and if it doesn't
+    // we'd need to forward multiple calls to this method to the same NSArray,
+    // which would require holding a reference to it somewhere.
+    __autoreleasing RLMArrayHolder *copy = [[RLMArrayHolder alloc] init];
+    copy->items = std::make_unique<id[]>(self.count);
+
+    NSUInteger i = 0;
+    for (id object in _backingArray) {
+        copy->items[i++] = object;
+    }
+
+    state->itemsPtr = (__unsafe_unretained id *)(void *)copy->items.get();
+    // needs to point to something valid, but the whole point of this is so
+    // that it can't be changed
+    state->mutationsPtr = state->extra;
+    state->state = i;
+
+    return i;
+}
+
+- (void)addObjectsFromArray:(NSArray *)array {
+    for (id obj in array) {
+        RLMValidateMatchingObjectType(self, obj);
+    }
+    changeArray(self, NSKeyValueChangeInsertion, NSMakeRange(_backingArray.count, array.count), ^{
+        [_backingArray addObjectsFromArray:array];
+    });
 }
 
 - (void)insertObject:(RLMObject *)anObject atIndex:(NSUInteger)index {
     RLMValidateMatchingObjectType(self, anObject);
-    [_backingArray insertObject:anObject atIndex:index];
+    RLMValidateArrayBounds(self, index, true);
+    changeArray(self, NSKeyValueChangeInsertion, index, ^{
+        [_backingArray insertObject:anObject atIndex:index];
+    });
+}
+
+- (void)insertObjects:(id<NSFastEnumeration>)objects atIndexes:(NSIndexSet *)indexes {
+    changeArray(self, NSKeyValueChangeInsertion, indexes, ^{
+        NSUInteger currentIndex = [indexes firstIndex];
+        for (RLMObject *obj in objects) {
+            RLMValidateMatchingObjectType(self, obj);
+            [_backingArray insertObject:obj atIndex:currentIndex];
+            currentIndex = [indexes indexGreaterThanIndex:currentIndex];
+        }
+    });
 }
 
 - (void)removeObjectAtIndex:(NSUInteger)index {
-    [_backingArray removeObjectAtIndex:index];
+    RLMValidateArrayBounds(self, index);
+    changeArray(self, NSKeyValueChangeRemoval, index, ^{
+        [_backingArray removeObjectAtIndex:index];
+    });
+}
+
+- (void)removeObjectsAtIndexes:(NSIndexSet *)indexes {
+    changeArray(self, NSKeyValueChangeRemoval, indexes, ^{
+        [_backingArray removeObjectsAtIndexes:indexes];
+    });
 }
 
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(id)anObject {
     RLMValidateMatchingObjectType(self, anObject);
-    [_backingArray replaceObjectAtIndex:index withObject:anObject];
+    RLMValidateArrayBounds(self, index);
+    changeArray(self, NSKeyValueChangeReplacement, index, ^{
+        [_backingArray replaceObjectAtIndex:index withObject:anObject];
+    });
+}
+
+- (void)moveObjectAtIndex:(NSUInteger)sourceIndex toIndex:(NSUInteger)destinationIndex {
+    RLMValidateArrayBounds(self, sourceIndex);
+    RLMValidateArrayBounds(self, destinationIndex);
+    RLMObjectBase *original = _backingArray[sourceIndex];
+
+    auto start = std::min(sourceIndex, destinationIndex);
+    auto len = std::max(sourceIndex, destinationIndex) - start + 1;
+    changeArray(self, NSKeyValueChangeReplacement, {start, len}, ^{
+        [_backingArray removeObjectAtIndex:sourceIndex];
+        [_backingArray insertObject:original atIndex:destinationIndex];
+    });
+}
+
+- (void)exchangeObjectAtIndex:(NSUInteger)index1 withObjectAtIndex:(NSUInteger)index2 {
+    RLMValidateArrayBounds(self, index1);
+    RLMValidateArrayBounds(self, index2);
+
+    changeArray(self, NSKeyValueChangeReplacement, ^{
+        [_backingArray exchangeObjectAtIndex:index1 withObjectAtIndex:index2];
+    }, [=] {
+        NSMutableIndexSet *set = [[NSMutableIndexSet alloc] initWithIndex:index1];
+        [set addIndex:index2];
+        return set;
+    });
 }
 
 - (NSUInteger)indexOfObject:(RLMObject *)object {
     RLMValidateMatchingObjectType(self, object);
     NSUInteger index = 0;
     for (RLMObject *cmp in _backingArray) {
-        if ([object isEqualToObject:cmp]) {
+        if (RLMObjectBaseAreEqual(object, cmp)) {
             return index;
         }
         index++;
@@ -156,13 +281,58 @@ static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
     return NSNotFound;
 }
 
-- (void)deleteObjectsFromRealm {
-    for (RLMObject *obj in _backingArray) {
-        RLMDeleteObjectFromRealm(obj);
-    }
+- (void)removeAllObjects {
+    changeArray(self, NSKeyValueChangeRemoval, NSMakeRange(0, _backingArray.count), ^{
+        [_backingArray removeAllObjects];
+    });
 }
 
+- (RLMResults *)objectsWhere:(NSString *)predicateFormat, ...
+{
+    va_list args;
+    RLM_VARARG(predicateFormat, args);
+    return [self objectsWhere:predicateFormat args:args];
+}
 
+- (RLMResults *)objectsWhere:(NSString *)predicateFormat args:(va_list)args
+{
+    return [self objectsWithPredicate:[NSPredicate predicateWithFormat:predicateFormat arguments:args]];
+}
+
+- (id)valueForKey:(NSString *)key {
+    if ([key isEqualToString:RLMInvalidatedKey]) {
+        return @NO; // Standalone arrays are never invalidated
+    }
+    if (!_backingArray) {
+        return @[];
+    }
+    return [_backingArray valueForKey:key];
+}
+
+- (void)setValue:(id)value forKey:(NSString *)key {
+    [_backingArray setValue:value forKey:key];
+}
+
+- (NSUInteger)indexOfObjectWithPredicate:(NSPredicate *)predicate {
+    if (!_backingArray) {
+        return NSNotFound;
+    }
+    return [_backingArray indexOfObjectPassingTest:^BOOL(id obj, NSUInteger, BOOL *) {
+        return [predicate evaluateWithObject:obj];
+    }];
+}
+
+- (NSArray *)objectsAtIndexes:(NSIndexSet *)indexes {
+    if (!_backingArray) {
+        _backingArray = [NSMutableArray new];
+    }
+    return [_backingArray objectsAtIndexes:indexes];
+}
+
+- (void)addObserver:(NSObject *)observer forKeyPath:(NSString *)keyPath options:(NSKeyValueObservingOptions)options context:(void *)context {
+    RLMValidateArrayObservationKey(keyPath, self);
+    [super addObserver:observer forKeyPath:keyPath options:options context:context];
+}
 
 //
 // Methods unsupported on standalone RLMArray instances
@@ -170,50 +340,23 @@ static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-- (RLMArray *)objectsWhere:(NSString *)predicateFormat, ...
+
+- (RLMResults *)objectsWithPredicate:(NSPredicate *)predicate
 {
-    va_list args;
-    RLM_VARARG(predicateFormat, args);
-    return [self objectsWhere:predicateFormat args:args];
+    @throw RLMException(@"This method can only be called on RLMArray instances retrieved from an RLMRealm");
 }
 
-- (RLMArray *)objectsWhere:(NSString *)predicateFormat args:(va_list)args
+- (RLMResults *)sortedResultsUsingProperty:(NSString *)property ascending:(BOOL)ascending
 {
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
+    return [self sortedResultsUsingDescriptors:@[[RLMSortDescriptor sortDescriptorWithProperty:property ascending:ascending]]];
 }
 
-- (RLMArray *)objectsWithPredicate:(NSPredicate *)predicate
+- (RLMResults *)sortedResultsUsingDescriptors:(NSArray *)properties
 {
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
+    @throw RLMException(@"This method can only be called on RLMArray instances retrieved from an RLMRealm");
 }
 
-- (RLMArray *)arraySortedByProperty:(NSString *)property ascending:(BOOL)ascending
-{
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
-}
-
--(id)minOfProperty:(NSString *)property {
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
-}
-
--(id)maxOfProperty:(NSString *)property {
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
-}
-
--(NSNumber *)sumOfProperty:(NSString *)property {
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
-}
-
--(NSNumber *)averageOfProperty:(NSString *)property {
-    @throw [NSException exceptionWithName:@"RLMException"
-                                   reason:@"This method can only be called in RLMArray instances retrieved from an RLMRealm" userInfo:nil];
-}
+#pragma GCC diagnostic pop
 
 - (NSUInteger)indexOfObjectWhere:(NSString *)predicateFormat, ...
 {
@@ -228,27 +371,11 @@ static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
                                                                    arguments:args]];
 }
 
-- (NSUInteger)indexOfObjectWithPredicate:(NSPredicate *)predicate
-{
-    RLMArray *objects = [self objectsWithPredicate:predicate];
-    if ([objects count] == 0) {
-        return NSNotFound;
-    }
-    return [self indexOfObject:[objects firstObject]];
-}
-#pragma GCC diagnostic pop
-
-- (NSString *)JSONString {
-    @throw [NSException exceptionWithName:@"RLMNotImplementedException"
-                                   reason:@"Method not implemented" userInfo:nil];
-}
-
-
 #pragma mark - Superclass Overrides
 
 - (NSString *)description
 {
-    return [self descriptionWithMaxDepth:5];
+    return [self descriptionWithMaxDepth:RLMDescriptionMaxDepth];
 }
 
 - (NSString *)descriptionWithMaxDepth:(NSUInteger)depth {
@@ -257,7 +384,7 @@ static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
     }
 
     const NSUInteger maxObjects = 100;
-    NSMutableString *mString = [NSMutableString stringWithFormat:@"RLMArray <0x%lx> (\n", (long)self];
+    NSMutableString *mString = [NSMutableString stringWithFormat:@"RLMArray <%p> (\n", self];
     unsigned long index = 0, skipped = 0;
     for (id obj in self) {
         NSString *sub;
@@ -289,22 +416,21 @@ static void RLMValidateMatchingObjectType(RLMArray *array, RLMObject *object) {
 
 @end
 
-//
-// RLMCArrayHolder implementation
-//
-@implementation RLMCArrayHolder
-- (instancetype)initWithSize:(NSUInteger)arraySize {
-    if ((self = [super init])) {
-        size = arraySize;
-        array = std::make_unique<id[]>(size);
-    }
-    return self;
+@interface RLMSortDescriptor ()
+@property (nonatomic, strong) NSString *property;
+@property (nonatomic, assign) BOOL ascending;
+@end
+
+@implementation RLMSortDescriptor
++ (instancetype)sortDescriptorWithProperty:(NSString *)propertyName ascending:(BOOL)ascending {
+    RLMSortDescriptor *desc = [[RLMSortDescriptor alloc] init];
+    desc->_property = propertyName;
+    desc->_ascending = ascending;
+    return desc;
 }
 
-- (void)resize:(NSUInteger)newSize {
-    if (newSize != size) {
-        size = newSize;
-        array = std::make_unique<id[]>(size);
-    }
+- (instancetype)reversedSortDescriptor {
+    return [self.class sortDescriptorWithProperty:_property ascending:!_ascending];
 }
+
 @end

@@ -18,6 +18,12 @@
 
 #import <Realm/Realm.h>
 
+#if __has_extension(objc_generics)
+#define RLM_GENERIC_ARRAY(CLASS) RLMArray<CLASS *><CLASS>
+#else
+#define RLM_GENERIC_ARRAY(CLASS) RLMArray<CLASS>
+#endif
+
 #pragma mark - Abstract Objects
 #pragma mark -
 
@@ -78,8 +84,26 @@
 @property NSString *柱колоéнǢкƱаم;
 @end
 
+@interface IndexedStringObject : RLMObject
+@property NSString *stringCol;
+@end
+
 RLM_ARRAY_TYPE(StringObject)
 RLM_ARRAY_TYPE(IntObject)
+
+@interface LinkStringObject : RLMObject
+@property StringObject *objectCol;
+@end
+
+@interface LinkIndexedStringObject : RLMObject
+@property IndexedStringObject *objectCol;
+@end
+
+@interface RequiredPropertiesObject : RLMObject
+@property NSString *stringCol;
+@property NSData *binaryCol;
+@property NSDate *dateCol;
+@end
 
 #pragma mark AllTypesObject
 
@@ -106,7 +130,17 @@ RLM_ARRAY_TYPE(AllTypesObject)
 @end
 
 @interface ArrayOfAllTypesObject : RLMObject
-@property RLMArray<AllTypesObject> *array;
+@property RLM_GENERIC_ARRAY(AllTypesObject) *array;
+@end
+
+@interface AllOptionalTypes : RLMObject
+@property NSNumber<RLMInt> *intObj;
+@property NSNumber<RLMFloat> *floatObj;
+@property NSNumber<RLMDouble> *doubleObj;
+@property NSNumber<RLMBool> *boolObj;
+@property NSString *string;
+@property NSData *data;
+@property NSDate *date;
 @end
 
 #pragma mark - Real Life Objects
@@ -129,7 +163,7 @@ RLM_ARRAY_TYPE(EmployeeObject)
 @interface CompanyObject : RLMObject
 
 @property NSString *name;
-@property RLMArray<EmployeeObject> *employees;
+@property RLM_GENERIC_ARRAY(EmployeeObject) *employees;
 
 @end
 
@@ -139,6 +173,13 @@ RLM_ARRAY_TYPE(EmployeeObject)
 @property NSString *dogName;
 @property int age;
 @end
+
+RLM_ARRAY_TYPE(DogObject)
+
+@interface DogArrayObject : RLMObject
+@property RLM_GENERIC_ARRAY(DogObject) *dogs;
+@end
+
 
 #pragma mark OwnerObject
 
@@ -175,7 +216,7 @@ RLM_ARRAY_TYPE(EmployeeObject)
 
 @interface BaseClassStringObject : RLMObject
 
-@property NSInteger intCol;
+@property int intCol;
 
 @end
 
@@ -199,7 +240,7 @@ RLM_ARRAY_TYPE(CircleObject);
 #pragma mark CircleArrayObject
 
 @interface CircleArrayObject : RLMObject
-@property RLMArray<CircleObject> *circles;
+@property RLM_GENERIC_ARRAY(CircleObject) *circles;
 @end
 
 #pragma mark ArrayPropertyObject
@@ -207,19 +248,8 @@ RLM_ARRAY_TYPE(CircleObject);
 @interface ArrayPropertyObject : RLMObject
 
 @property NSString *name;
-@property RLMArray<StringObject> *array;
-@property RLMArray<IntObject> *intArray;
-
-@end
-
-#pragma mark - Class Extension
-
-@interface RLMRealm ()
-
-+ (instancetype)realmWithPath:(NSString *)path
-                     readOnly:(BOOL)readonly
-                      dynamic:(BOOL)dynamic
-                        error:(NSError **)outError;
+@property RLM_GENERIC_ARRAY(StringObject) *array;
+@property RLM_GENERIC_ARRAY(IntObject) *intArray;
 
 @end
 
@@ -228,7 +258,7 @@ RLM_ARRAY_TYPE(CircleObject);
 @interface DynamicObject : RLMObject
 
 @property NSString *stringCol;
-@property NSInteger intCol;
+@property int intCol;
 
 @end
 
@@ -244,6 +274,8 @@ RLM_ARRAY_TYPE(CircleObject);
 
 @end
 
+#pragma mark PrimaryStringObject
+
 @interface PrimaryStringObject : RLMObject
 @property NSString *stringCol;
 @property int intCol;
@@ -254,4 +286,26 @@ RLM_ARRAY_TYPE(CircleObject);
 @property (readonly) int readOnlyPropertyMadeReadWriteInClassExtension;
 @end
 
+#pragma mark IntegerArrayPropertyObject
 
+@interface IntegerArrayPropertyObject : RLMObject
+
+@property NSInteger number;
+@property RLM_GENERIC_ARRAY(IntObject) *array;
+
+@end
+
+@interface NumberObject : RLMObject
+@property NSNumber<RLMInt> *intObj;
+@property NSNumber<RLMFloat> *floatObj;
+@property NSNumber<RLMDouble> *doubleObj;
+@property NSNumber<RLMBool> *boolObj;
+@end
+
+@interface NumberDefaultsObject : NumberObject
+@end
+
+#pragma mark FakeObject
+
+@interface FakeObject : NSObject
+@end

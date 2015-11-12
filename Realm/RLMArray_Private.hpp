@@ -16,97 +16,90 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import "RLMArray.h"
+#import "RLMArray_Private.h"
+#import <Realm/RLMResults.h>
 
-#import <tightdb/row.hpp>
-#import <tightdb/link_view.hpp>
-#import <tightdb/table_view.hpp>
-#import <tightdb/query.hpp>
+#import <memory>
+#import <vector>
 
-//
-// RLMArray private properties/ivars for all subclasses
-//
-// NOTE: We put all sublass properties in the same class to keep
-//       the ivar layout the same - this allows us to switch implementations
-//       after creation
-@interface RLMArray () {
-  @private
-    // array for standalone
-    NSMutableArray *_backingArray;
-  @protected
-    // accessor ivars
-    RLMRealm *_realm;
-    NSString *_objectClassName;
+namespace realm {
+    class LinkView;
+    class Results;
+    class TableView;
+    struct SortOrder;
+
+    namespace util {
+        template<typename T> class bind_ptr;
+    }
+    typedef util::bind_ptr<LinkView> LinkViewRef;
 }
 
-/**
- Initialize a standalone RLMArray.
- 
- @warning Realm arrays are typed. You must specify an RLMObject class name
- during initialization and can only add objects of this type to the array.
- 
- @param objectClassName     The class name of the RLMObjects this RLMArray will hold.
- 
- @return                    An initialized RLMArray instance.
- */
-- (instancetype)initWithObjectClassName:(NSString *)objectClassName;
+@class RLMObjectBase;
+@class RLMObjectSchema;
+class RLMObservationInfo;
 
-// designated initializer for RLMArray subclasses
-- (instancetype)initViewWithObjectClassName:(NSString *)objectClassName;
+@protocol RLMFastEnumerable
+@property (nonatomic, readonly) RLMRealm *realm;
+@property (nonatomic, readonly) RLMObjectSchema *objectSchema;
+@property (nonatomic, readonly) NSUInteger count;
 
-// create standalone array variant
-+ (instancetype)standaloneArrayWithObjectClassName:(NSString *)objectClassName;
+- (NSUInteger)indexInSource:(NSUInteger)index;
+- (realm::TableView)tableView;
+@end
 
-// deletes all objects in the RLMArray from their containing realms
-- (void)deleteObjectsFromRealm;
-
+@interface RLMArray () {
+  @protected
+    NSString *_objectClassName;
+  @public
+    // The name of the property which this RLMArray represents
+    NSString *_key;
+    __weak RLMObjectBase *_parentObject;
+}
 @end
 
 
 //
 // LinkView backed RLMArray subclass
 //
-@interface RLMArrayLinkView : RLMArray {
-    // FIXME - make private once we have self updating accessors - for
-    //         now this gets set externally
-    @public
-    tightdb::LinkViewRef _backingLinkView;
-}
-+ (instancetype)arrayWithObjectClassName:(NSString *)objectClassName
-                                    view:(tightdb::LinkViewRef)view
-                                   realm:(RLMRealm *)realm;
+@interface RLMArrayLinkView : RLMArray <RLMFastEnumerable>
+@property (nonatomic, unsafe_unretained) RLMObjectSchema *objectSchema;
+
++ (RLMArrayLinkView *)arrayWithObjectClassName:(NSString *)objectClassName
+                                          view:(realm::LinkViewRef)view
+                                         realm:(RLMRealm *)realm
+                                           key:(NSString *)key
+                                  parentSchema:(RLMObjectSchema *)parentSchema;
+
+// deletes all objects in the RLMArray from their containing realms
+- (void)deleteObjectsFromRealm;
 @end
 
+void RLMValidateArrayObservationKey(NSString *keyPath, RLMArray *array);
+
+// Initialize the observation info for an array if needed
+void RLMEnsureArrayObservationInfo(std::unique_ptr<RLMObservationInfo>& info, NSString *keyPath, RLMArray *array, id observed);
+
 
 //
-// TableView backed RLMArray subclass
+// RLMResults private methods
 //
-@interface RLMArrayTableView : RLMArray
-+ (instancetype)arrayWithObjectClassName:(NSString *)objectClassName
-                                   query:(std::unique_ptr<tightdb::Query>)query
-                                   realm:(RLMRealm *)realm;
+@interface RLMResults () <RLMFastEnumerable>
++ (instancetype)resultsWithObjectSchema:(RLMObjectSchema *)objectSchema
+                                   results:(realm::Results)results;
 
-+ (instancetype)arrayWithObjectClassName:(NSString *)objectClassName
-                                    view:(tightdb::TableView)view
-                                   realm:(RLMRealm *)realm;
-
+- (void)deleteObjectsFromRealm;
 @end
 
-//
-// A simple holder for a C array of ids to enable autoreleasing the array without
-// the runtime overhead of a NSMutableArray
-//
-@interface RLMCArrayHolder : NSObject {
-@public
-    std::unique_ptr<id[]> array;
-    NSUInteger size;
-}
+// An object which encapulates the shared logic for fast-enumerating RLMArray
+// and RLMResults, and has a buffer to store strong references to the current
+// set of enumerated items
+@interface RLMFastEnumerator : NSObject
+- (instancetype)initWithCollection:(id<RLMFastEnumerable>)collection objectSchema:(RLMObjectSchema *)objectSchema;
 
-- (instancetype)initWithSize:(NSUInteger)size;
+// Detach this enumerator from the source collection. Must be called before the
+// source collection is changed.
+- (void)detach;
 
-// Reallocate the array if it is not already the given size
-- (void)resize:(NSUInteger)size;
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                    count:(NSUInteger)len;
 @end
-
-
-
